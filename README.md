@@ -1,0 +1,2 @@
+# VillagerTrade
+This Cuberite Plugin adds "sort of" working villager trade to Cuberite. Unlike Vanilla, the villager has no professions/types due to the Lua API limit, instead the trade list may refresh. An "Trading Experience/Level" may be present for each player in each catagory.
