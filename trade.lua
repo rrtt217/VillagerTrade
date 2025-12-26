@@ -19,6 +19,15 @@ function SyncTradeWindowToInventory(Window, Player)
     end
 end
 
+function cWindow:GetSlotAfterDrag(Player, SlotNum, ClickedSlotNum)
+    if self:GetSlot(Player,SlotNum).m_ItemType == -1 and SlotNum == ClickedSlotNum then
+        LOG("Getting dragging item for slot " .. SlotNum)
+        LOG(" Dragging Item: Type=" .. tostring(Player:GetDraggingItem().m_ItemType) .. " Count=" .. tostring(Player:GetDraggingItem().m_ItemCount))
+        return Player:GetDraggingItem()
+    end
+    return self:GetSlot(Player,SlotNum)
+end
+
 function HandleShiftLeftClick(Window, Player, SlotNum)
     -- 处理 Shift + 左键点击的逻辑
     -- 尝试移动至快捷栏 30-38, 失败则返回true阻止操作
@@ -52,13 +61,22 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     -- 处理交易窗口点击事件的逻辑
     -- 同步玩家物品栏到交易窗口的槽位 5-39
     local click = ClickActionToString(ClickAction)
+    local tradeAsMuch = false
     if SlotNum == -999 then
-        -- 点击了关闭按钮，忽略
         return true
     end
     if click == "caShiftLeftClick" then
-        HandleShiftLeftClick(Window, Player, SlotNum)
+        if SlotNum == 2 then
+            -- 尝试一次性完成交易
+            tradeAsMuch = true
+        else
+            HandleShiftLeftClick(Window, Player, SlotNum)
+        end
         SyncTradeWindowToInventory(Window, Player)
+    end
+    if click == "caShiftRightClick" and SlotNum < 3 then
+        -- 阻止 Shift + 右键点击操作
+        return true
     end
     if SlotNum == 30 then
        -- 临时修复措施：未知问题导致点击槽30时物品丢失，阻止该操作
@@ -66,47 +84,28 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     end
     SyncTradeWindowToInventory(Window, Player)
     SyncInventoryToTradeWindow(Window, Player)
-    -- 按照协议，光标有独立槽位499，但是我们使用GetDraggingItem和SetDraggingItem
-    local draggingItem = Player:GetDraggingItem()
-    if draggingItem.m_ItemType ~= -1 then
-        -- 玩家正拖拽物品，如果尝试点击输入槽，将物品放到输入槽
-        LOG("Player is dragging item: Type=" .. tostring(draggingItem.m_ItemType) .. " Count=" .. tostring(draggingItem.m_ItemCount))
-        if SlotNum == 0 then
-            if Window:GetSlot(Player, 0).m_ItemType == -1 then
-                LOG("Placing dragged item into input slot 1")
-                Window:SetSlot(Player, 0, draggingItem)
-                LOG(" Input Slot 1: ItemType=" .. tostring(Window:GetSlot(Player, 0).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 0).m_ItemCount))
-                Player:SetDraggingItem(cItem())
-            end
-        elseif SlotNum == 1 then
-            if Window:GetSlot(Player, 1).m_ItemType == -1 then
-                LOG("Placing dragged item into input slot 2")
-                Window:SetSlot(Player, 1, draggingItem)
-                Player:SetDraggingItem(cItem())
-            end
-        end
-    end
     for i, r in ipairs(TradeList) do
         -- 检查输入物品是否匹配交易要求
         local match = true
         if r.buy then
             for j, b in ipairs(r.buy) do
                 if j == 1 then
-                    if Window:GetSlot(Player, 0).m_ItemType ~= b.id or Window:GetSlot(Player, 0).m_ItemCount < b.count then
+                    if (Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType ~= b.id or Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount < b.count) then
                         match = false
                         break
                     end
                 elseif j == 2 then
-                    if Window:GetSlot(Player, 1).m_ItemType ~= b.id or Window:GetSlot(Player, 1).m_ItemCount < b.count then
+                    if (Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType ~= b.id or Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount < b.count) then
                         match = false
                         break
                     end
                 end
             end
         end
+        LOG("Trade check for trade " .. i .. ": match=" .. tostring(match))
         if match then
             -- 执行交易：添加输出物品至槽位2
-            if r.sell then
+            if r.sell and not tradeAsMuch then
                 for _, s in ipairs(r.sell) do
                     if Window:GetSlot(Player, 2).m_ItemType ~= -1 then
                         break
@@ -117,28 +116,46 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                 end
             end
         end
+        local HowManyCanTrade = math.huge
         if SlotNum == 2 then
             -- 从输入槽扣除物品
             for j, b in ipairs(r.buy) do
-                    if j == 1 then
-                        Window:SetSlot(Player, 0, cItem(Window:GetSlot(Player, 0).m_ItemType, Window:GetSlot(Player, 0).m_ItemCount - b.count))
-                        if Window:GetSlot(Player, 0).m_ItemCount <= 0 then
-                            Window:SetSlot(Player, 0, cItem(Window:GetSlot(Player, 0).m_ItemType, Window:GetSlot(Player, 0).m_ItemCount + b.count))
+                    match = true
+                    if j == 1 and not tradeAsMuch then
+                        Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.count))
+                        if Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount < 0 then
+                            Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount + b.count))
                             return true
                         end
-                    elseif j == 2 then
-                        Window:SetSlot(Player, 1, cItem(Window:GetSlot(Player, 1).m_ItemType, Window:GetSlot(Player, 1).m_ItemCount - b.count))
-                        if Window:GetSlot(Player, 1).m_ItemCount <= 0 then
-                            Window:SetSlot(Player, 1, cItem(Window:GetSlot(Player, 1).m_ItemType, Window:GetSlot(Player, 1).m_ItemCount + b.count))
+                    elseif j == 2 and not tradeAsMuch then
+                        Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.count))
+                        if Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount < 0 then
+                            Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount + b.count))
+                            return true
+                        end
+                    elseif tradeAsMuch then
+                        local possibleTrades = math.huge
+                        if j == 1 then
+                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount / b.count)
+                        elseif j == 2 then
+                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount / b.count)
+                        end
+                        HowManyCanTrade = math.min(HowManyCanTrade, possibleTrades)
+                        if HowManyCanTrade > 0 then
+                            Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.count * HowManyCanTrade))
+                            Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.count * HowManyCanTrade))
+                            Window:SetSlot(Player, 2, cItem(r.sell[1].id, r.sell[1].count * HowManyCanTrade))
+                            HandleShiftLeftClick(Window, Player, 2)
+                        else
                             return true
                         end
                     end
                 end
-            end
+        end
     -- 更新窗口槽位
-    Window:SetSlot(Player, 0, Window:GetSlot(Player, 0))
-    Window:SetSlot(Player, 1, Window:GetSlot(Player, 1))
-    Window:SetSlot(Player, 2, Window:GetSlot(Player, 2))
+    -- Window:SetSlot(Player, 0, Window:GetSlot(Player, 0))
+    -- Window:SetSlot(Player, 1, Window:GetSlot(Player, 1))
+    -- Window:SetSlot(Player, 2, Window:GetSlot(Player, 2))
     LOG("After trade processing:")
     LOG(" Input Slot 1: ItemType=" .. tostring(Window:GetSlot(Player, 0).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 0).m_ItemCount))
     LOG(" Input Slot 2: ItemType=" .. tostring(Window:GetSlot(Player, 1).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 1).m_ItemCount))
