@@ -1,0 +1,8 @@
+# This file describes thr trade that is in VillagerTrade Plugin.
+# The Syntax is as follows:
+# <Input1>, (<Input1Min>,<Input1Max>) ; <Input2>, (<Input2Min>,<Input2Max>) = <Output>, <OutputNum> | <Weight> | <UnlockLevel> | <Profession>
+# Or:
+# <Input1>, (<Input1Min>,<Input1Max>) = <Output>, <OutputNum> | <Weight> | <UnlockLevel> | <Profession>
+# for only one input,
+# where
+# <Input1>,<Input2> = <ItemType> [^<DamageValue>] 

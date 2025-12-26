@@ -32,7 +32,12 @@ function HandleShiftLeftClick(Window, Player, SlotNum)
     -- 处理 Shift + 左键点击的逻辑
     -- 尝试移动至快捷栏 30-38, 失败则返回true阻止操作
     local item = Window:GetSlot(Player, SlotNum)
-    for hotbarSlot = 30, 38 do
+    if SlotNum < 3 then
+        LowerBound = 3
+    else
+        LowerBound = 30
+    end
+    for hotbarSlot = LowerBound, 38 do
         local invItem = Window:GetSlot(Player, hotbarSlot)
         if invItem.m_ItemType == -1 then
             -- 空位，直接移动
@@ -55,6 +60,7 @@ function HandleShiftLeftClick(Window, Player, SlotNum)
             end
         end
     end
+    return true -- 无法移动，阻止操作
 end
 
 function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
@@ -70,7 +76,9 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
             -- 尝试一次性完成交易
             tradeAsMuch = true
         else
-            HandleShiftLeftClick(Window, Player, SlotNum)
+            if HandleShiftLeftClick(Window, Player, SlotNum) then
+                return true
+            end
         end
         SyncTradeWindowToInventory(Window, Player)
     end
@@ -145,7 +153,9 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                             Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.count * HowManyCanTrade))
                             Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.count * HowManyCanTrade))
                             Window:SetSlot(Player, 2, cItem(r.sell[1].id, r.sell[1].count * HowManyCanTrade))
-                            HandleShiftLeftClick(Window, Player, 2)
+                            if HandleShiftLeftClick(Window, Player, 2) then
+                                return true
+                            end
                         else
                             return true
                         end
