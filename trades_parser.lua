@@ -65,6 +65,16 @@ local function parseItemSpec(spec)
     return {type = item, damage = damage, enchantments = enchantments}
 end
 
+local function villagetTypeStringToNumber(villagerType)
+    if villagerType == "vtFarmer" then return 0
+    elseif villagerType == "vtLibrarian" then return 1
+    elseif villagerType == "vtPriest" then return 2
+    elseif villagerType == "vtBlacksmith" then return 3
+    elseif villagerType == "vtButcher" then return 4
+    elseif villagerType == "vtGeneric" then return 5
+    else return 5 end
+end
+
 function trades_parser.parseTradesFromFile(filename)
     local path = PLUGIN:GetLocalFolder() .. "/trades.txt"
     local file = io.open(path, "r")
@@ -120,12 +130,14 @@ function trades_parser.parseTradesFromFile(filename)
                         if t:match("id=%d+") or t:match("ByXpLevels") then
                             entry.output.item.enchantments = t
                         elseif t:match("^vt%w+") then
-                            entry.profession = t
+                            entry.profession = villagetTypeStringToNumber(t)
                         else
                             local n = tonumber(t)
                             if n then
                                 if not entry.weight then
                                     entry.weight = n
+                                elseif not entry.profession then
+                                    entry.profession = n
                                 elseif not entry.unlockLevel and n >= 0 and n <= 3 then
                                     entry.unlockLevel = n
                                 else
@@ -143,7 +155,6 @@ function trades_parser.parseTradesFromFile(filename)
             end
         end
     end
-
     file:close()
     return Trades
 end

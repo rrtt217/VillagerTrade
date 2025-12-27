@@ -92,18 +92,19 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     end
     SyncTradeWindowToInventory(Window, Player)
     SyncInventoryToTradeWindow(Window, Player)
-    for i, r in ipairs(TradeList) do
+    for _, profTrades in ipairs(Player.trades) do
+    for i, r in ipairs(profTrades) do
         -- 检查输入物品是否匹配交易要求
         local match = true
-        if r.buy then
-            for j, b in ipairs(r.buy) do
+        if r.inputs then
+            for j, b in ipairs(r.inputs) do
                 if j == 1 then
-                    if (Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType ~= b.id or Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount < b.count) then
+                    if (Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType ~= b.m_ItemType or Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount < b.m_ItemCount) then
                         match = false
                         break
                     end
                 elseif j == 2 then
-                    if (Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType ~= b.id or Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount < b.count) then
+                    if (Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType ~= b.m_ItemType or Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount < b.m_ItemCount) then
                         match = false
                         break
                     end
@@ -113,46 +114,49 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
         LOG("Trade check for trade " .. i .. ": match=" .. tostring(match))
         if match then
             -- 执行交易：添加输出物品至槽位2
-            if r.sell and not tradeAsMuch then
-                for _, s in ipairs(r.sell) do
-                    if Window:GetSlot(Player, 2).m_ItemType ~= -1 then
-                        break
+            LOG("output:" .. tostring(r.output.m_ItemType) .. " Count=" .. tostring(r.output.m_ItemCount))
+            if r.output and not tradeAsMuch then
+                if Window:GetSlot(Player, 2).m_ItemType ~= -1 then
+                    break
                 else
                     -- 输出槽为空，放入新物品
-                    Window:SetSlot(Player, 2, cItem(s.id, s.count))
-                    end
+                    Window:SetSlot(Player, 2, r.output)
+                    Window:SetSlot(Player, 2, r.output)
+                    Window:SetSlot(Player, 2, r.output)
+                    Window:SetSlot(Player, 2, r.output)
+                    Window:SetSlot(Player, 2, r.output)
                 end
             end
         end
         local HowManyCanTrade = math.huge
         if SlotNum == 2 then
             -- 从输入槽扣除物品
-            for j, b in ipairs(r.buy) do
+            for j, b in ipairs(r.inputs) do
                     match = true
                     if j == 1 and not tradeAsMuch then
-                        Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.count))
+                        Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.m_ItemCount))
                         if Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount < 0 then
-                            Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount + b.count))
+                            Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount + b.m_ItemCount))
                             return true
                         end
                     elseif j == 2 and not tradeAsMuch then
-                        Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.count))
+                        Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.m_ItemCount))
                         if Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount < 0 then
-                            Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount + b.count))
+                            Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount + b.m_ItemCount))
                             return true
                         end
                     elseif tradeAsMuch then
                         local possibleTrades = math.huge
                         if j == 1 then
-                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount / b.count)
+                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount / b.m_ItemCount)
                         elseif j == 2 then
-                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount / b.count)
+                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount / b.m_ItemCount)
                         end
                         HowManyCanTrade = math.min(HowManyCanTrade, possibleTrades)
                         if HowManyCanTrade > 0 then
-                            Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.count * HowManyCanTrade))
-                            Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.count * HowManyCanTrade))
-                            Window:SetSlot(Player, 2, cItem(r.sell[1].id, r.sell[1].count * HowManyCanTrade))
+                            Window:SetSlot(Player, 0, cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount - b.m_ItemCount * HowManyCanTrade))
+                            Window:SetSlot(Player, 1, cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemType, Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount - b.m_ItemCount * HowManyCanTrade))
+                            Window:SetSlot(Player, 2, r.output:AddCount(r.output.m_ItemCount * HowManyCanTrade - 1))
                             if HandleShiftLeftClick(Window, Player, 2) then
                                 return true
                             end
@@ -174,6 +178,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     SyncInventoryToTradeWindow(Window, Player)
     break -- 假设一次只处理一个匹配的交易
     end
+end
     SyncTradeWindowToInventory(Window, Player)
     SyncInventoryToTradeWindow(Window, Player)
     LOG("Player " .. Player:GetName() .. " clicked slot " .. SlotNum .. " in trade window. Action: " .. click)
@@ -198,19 +203,6 @@ function TradeOnRightClickingVillager(Player, Entity)
     VillagerTradeWindow:SetOnClicked(OnClickTradeWindow)
     VillagerTradeWindow:SetOnClosing(OnCloseTradeWindow)
     -- 加载插件目录下的 villager_trades.lua（如果存在）
-    Trades = {}
-    if PLUGIN ~= nil then
-        local path = PLUGIN:GetLocalFolder() .. "/villager_trades.lua"
-        local f = io.open(path, "r")
-        if f then
-            f:close()
-            local ok, result = pcall(dofile, path)
-            if ok and type(result) == "table" then
-                Trades = result
-                LOG("Loaded villager trades from " .. path)
-            end
-        end
-    end
 
     if Entity:IsMob() then
         tolua:cast(Entity, "cMonster")
@@ -218,22 +210,19 @@ function TradeOnRightClickingVillager(Player, Entity)
         if Entity:GetMobType() == mtVillager then
             -- 按玩家是否潜行决定行为：潜行则不打开 UI，仅发送交易信息
             local prof = "default"
-            TradeList = Trades[prof] or Trades.default
             if Player:IsCrouched() then
-                if TradeList and #TradeList > 0 then
+                if Player.trades then
                     Player:SendMessage("[VillagerTrade] 可用交易：")
-                    for i, t in ipairs(TradeList) do
+                    for i, t in ipairs(Player.trades) do
                         local buyParts = {}
-                        if t.buy then
-                            for _, b in ipairs(t.buy) do
-                                table.insert(buyParts, (b.count or 1) .. "x id" .. (b.id or "?"))
+                        if t.inputs then
+                            for _, b in ipairs(t.inputs) do
+                                table.insert(buyParts, (b.m_ItemCount or 1) .. "x id" .. (ItemToString(b) or "?"))
                             end
                         end
                         local sellParts = {}
-                        if t.sell then
-                            for _, s in ipairs(t.sell) do
-                                table.insert(sellParts, (s.count or 1) .. "x id" .. (s.id or "?"))
-                            end
+                        if t.output then
+                                table.insert(sellParts, (t.output.m_ItemCount or 1) .. "x id" .. (ItemToString(t.output) or "?"))
                         end
                         Player:SendMessage(" - 交易 " .. i .. ": 给 " .. table.concat(buyParts, ", ") .. " -> 得到 " .. table.concat(sellParts, ", "))
                     end

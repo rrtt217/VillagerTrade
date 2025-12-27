@@ -7,7 +7,7 @@
 # where
 # <Input1>,<Input2>,<output> = <ItemType> [^<DamageValue>] [-"<Enchantments>"]
 # Specally, if <ItemType> = enchanted_book(403) in <Output>
-# <Enchantments> = <EnchantmentString> or ByXpLevels_(LevelMin,LevelMax)
+# <Enchantments> = <EnchantmentString> or ByXpLevels-(LevelMin,LevelMax)
 # <EnchantmentString> = "id=lvl;id=lvl;...;id=lvl;"
 # <Profession> = :
 #		vtFarmer     = 0,
@@ -18,7 +18,7 @@
 #		vtGeneric    = 5,
 # <UnlockLevel> = 0~3, like before 1.14.
 # <TradeXp> is a number, like after 1.14. Enough TradeXp
-# <Weight> describes the probability of the trade. 
-emerald^1-"id=lvl", = bread, (2,4) | 1 | 0 | 0 | 2
+# <Weight> describes the probability of the trade.(0~1) 
+emerald = bread, (2,4) | 1 | 0 | 0 | 2
 wheat, (18,22) = emerald | 1 | 0 | 0 | 2
 emerald, (5,71) = enchantedbook | 1 | 1 | 1 | 4

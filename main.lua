@@ -43,15 +43,118 @@ function Initialize(Plugin)
         LOG("No player trade experience data loaded.")
     end
     _G.XpTable = XpTable
+    local PlayerTrades = {}
+    local pathTrades = PLUGIN:GetLocalFolder() .. "/player_trades.txt"
+    local fileTrades = io.open(pathTrades, "r")
+    if fileTrades then
+        for line in fileTrades:lines() do
+            local uuid, tradesJson = line:match("^(%S+)%s*=%s*(.+)$")
+            if uuid and tradesJson then
+                LOG("Loading trades for player UUID " .. uuid)
+                LOG("Trades JSON: " .. tradesJson)
+                local success, trades = pcall(function() return cJson:Parse(tradesJson) end)
+                if success and trades then
+                    LOG("Successfully parsed trades for player UUID " .. uuid)
+                    PlayerTrades[uuid] = trades
+                end
+            end
+        end
+        fileTrades:close()
+    end
+    PlayerTrades = GeneratePlayerTradesFromSerializable(PlayerTrades)
+    LOG("Loaded player trades for " .. tostring(#PlayerTrades) .. " players.")
+    cRoot:Get():ForEachPlayer(function(player)
+        local uuid = player:GetUUID()
+        if XpTable and XpTable[uuid] then
+            player.TradeExperience = XpTable[uuid]
+        else
+            player.TradeExperience = {0, 0, 0, 0, 0, 0}
+        end
+        LOG("Loaded trade experience for player " .. player:GetName())
+    end)
+    _G.PlayerTrades = PlayerTrades
     -- Hook right-clicking villager to open trade window
+    cRoot:Get():ForEachWorld(RefreshVillagerTrades)
+---@diagnostic disable-next-line: param-type-mismatch
 	cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_RIGHT_CLICKING_ENTITY, TradeOnRightClickingVillager)
-    cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_JOINED, LoadTradeXpOnPlayerJoined)
-    cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_DESTROYED, SaveTradeXpOnPlayerDestroyed)
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_JOINED, LoadTradeOnPlayerJoined)
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_DESTROYED, SaveTradeOnPlayerDestroyed)
 	return true
 end
 
+function MyItemToFullString(item)
+    local itemStr = string.format("%s:%d * %d - %s", ItemToString(item), item.m_ItemDamage, item.m_ItemCount, item.m_Enchantments:ToString())
+    return itemStr
+end
+
+function MyFullStringToItem(itemStr)
+    local itemType, itemDamage, itemCount, enchantmentsStr = itemStr:match("^(.-):(%d+)%s*%*%s*(%d+)%s*-%s*(.*)$")
+    if not itemType or not itemDamage or not itemCount then
+        return nil
+    end
+    local item = cItem()
+    StringToItem(itemType, item)
+    item.m_ItemDamage = tonumber(itemDamage) or 0
+    item.m_ItemCount = tonumber(itemCount) or 1
+    if enchantmentsStr and enchantmentsStr ~= "" then
+        item.m_Enchantments = cEnchantments(enchantmentsStr)
+    end
+    return item
+end
+
+function ConvertPlayerTradesToSerializable()
+    local serializableTrades = {}
+    for uuid, trades in pairs(PlayerTrades) do
+        serializableTrades[uuid] = {}
+        for profIndex, profTrades in pairs(trades) do
+            serializableTrades[uuid][profIndex] = {}
+            for i, trade in ipairs(profTrades) do
+                local serializableInputs = {}
+                if not trade.inputs then break end
+                for j, input in ipairs(trade.inputs) do
+                    serializableInputs[j] = MyItemToFullString(input)
+                end
+                local serializableOutput = MyItemToFullString(trade.output)
+                serializableTrades[uuid][profIndex][i] = {["inputs"] = serializableInputs, ["output"] = serializableOutput}
+            end
+        end
+    end
+    return serializableTrades
+end
+
+function GeneratePlayerTradesFromSerializable(serializableTrades)
+    local playerTrades = {}
+    for uuid, trades in pairs(serializableTrades) do
+        playerTrades[uuid] = {}
+        LOG("Generating trades for player UUID " .. uuid)
+        LOG("Trades data: " .. cJson:Serialize(trades,{indentation = ""}))
+        for profIndex, profTrades in pairs(trades) do
+            playerTrades[uuid][profIndex] = {}
+            for i, trade in ipairs(profTrades) do
+                local deserializedInputs = {}
+                for j, inputStr in ipairs(trade.inputs) do
+                    local item = MyFullStringToItem(inputStr)
+                    deserializedInputs[j] = item
+                end
+                local outputItem = MyFullStringToItem(trade.output)
+                LOG(MyItemToFullString(outputItem or cItem()) )
+                playerTrades[uuid][profIndex][i] = {inputs = deserializedInputs, output = outputItem}
+                LOG("  Trade " .. i .. ":")
+                for j, input in ipairs(deserializedInputs) do
+                    LOG("    Input " .. j .. ": " .. MyItemToFullString(input))
+                end
+            end
+        end
+    end
+    LOG("Generated player trades from serializable data.")
+    LOG("Player Trades: " .. cJson:Serialize(playerTrades,{indentation = ""}))
+    return playerTrades
+end
+
 -- @param Player cPlayer
-function LoadTradeXpOnPlayerJoined(Player)
+function LoadTradeOnPlayerJoined(Player)
     local uuid = Player:GetUUID()
     if XpTable and XpTable[uuid] then
         Player.TradeExperience = XpTable[uuid]
@@ -62,9 +165,15 @@ function LoadTradeXpOnPlayerJoined(Player)
     for i, xp in ipairs(Player.TradeExperience) do
         LOG("  Profession " .. i .. ": " .. tostring(xp) .. " XP")
     end
+    if PlayerTrades[Player:GetUUID()] then
+        Player.trades = PlayerTrades[Player:GetUUID()]
+    else
+        RefreshTradesForPlayer(Player)
+    end
 end
 
-function SaveTradeXpOnPlayerDestroyed(Player)
+-- @param Player cPlayer
+function SaveTradeOnPlayerDestroyed(Player)
     if XpTable then
         local uuid = Player:GetUUID()
         XpTable[uuid] = Player.TradeExperience
@@ -73,10 +182,14 @@ function SaveTradeXpOnPlayerDestroyed(Player)
     for i, xp in ipairs(Player.TradeExperience) do
         LOG("  Profession " .. i .. ": " .. tostring(xp) .. " XP")
     end
+    PlayerTrades[Player:GetUUID()] = Player.trades
 end
 
 function OnDisable()
     LOG("Saving player trade experience data...")
+    cRoot:Get():ForEachPlayer(function(player)
+        SaveTradeOnPlayerDestroyed(player)
+    end)
     local path = PLUGIN:GetLocalFolder() .. "/player_trade_experience.txt"
     local file = io.open(path, "w")
     if file then
@@ -92,6 +205,13 @@ function OnDisable()
         end
         file:close()
     end
-	LOG("Shutting down...")
+    local pathTrades = PLUGIN:GetLocalFolder() .. "/player_trades.txt"
+    local fileTrades = io.open(pathTrades, "w")
+    if fileTrades then
+        for uuid, trades in pairs(ConvertPlayerTradesToSerializable()) do
+            fileTrades:write(uuid .. " = " .. cJson:Serialize(trades,{indentation = ""}) .. "\n")
+        end
+        fileTrades:close()
+    end
+    LOG("Shutting down...")
 end
-    
