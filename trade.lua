@@ -66,7 +66,6 @@ end
 function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     -- 处理交易窗口点击事件的逻辑
     -- 同步玩家物品栏到交易窗口的槽位 5-39
-    local tradeSuccessful = false
     local click = ClickActionToString(ClickAction)
     local tradeAsMuch = false
     if click == "caShiftLeftClick" then
@@ -113,7 +112,6 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
         if match then
             -- 执行交易：添加输出物品至槽位2
             LOG("output:" .. tostring(r.output.m_ItemType) .. " Count=" .. tostring(r.output.m_ItemCount))
-            tradeSuccessful = true
             if r.output and not tradeAsMuch then
                 if Window:GetSlot(Player, 2).m_ItemType ~= -1 then
                 else
@@ -124,23 +122,17 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
         end
         local HowManyCanTrade = math.huge
         LOG("slotnum" .. tostring(SlotNum))
-        if SlotNum == 2 and tradeSuccessful then
+        if SlotNum == 2 and match then
             -- 从输入槽扣除物品
             for j, b in ipairs(r.inputs) do
-                    match = true
+                    -- match = true
                     LOG(tostring(j) .. ": Required ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
                     if j == 1 and not tradeAsMuch then
-                        if Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount < b.m_ItemCount then
-                            return true
-                        end
                         local newInput1 = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
                         Window:SetSlot(Player, 0, newInput1:AddCount(-b.m_ItemCount))
                         LOG(" Deducted from input slot 0: ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
                         LOG(" After deduction, Slot 0: ItemType=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType) .. " Count=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount))
                     elseif j == 2 and not tradeAsMuch then
-                        if Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount < b.m_ItemCount then
-                            return true
-                        end
                         local newInput2 = cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum))
                         Window:SetSlot(Player, 1, newInput2:AddCount(-b.m_ItemCount))
                     elseif tradeAsMuch then
@@ -213,19 +205,21 @@ function TradeOnRightClickingVillager(Player, Entity)
             if Player:IsCrouched() then
                 if Player.trades then
                     Player:SendMessage("[VillagerTrade] 可用交易：")
-                    for i, t in ipairs(Player.trades) do
+                    for indexProf, tradesProf in ipairs(Player.trades) do
+                    for i, t in ipairs(tradesProf) do
                         local buyParts = {}
                         if t.inputs then
                             for _, b in ipairs(t.inputs) do
-                                table.insert(buyParts, (b.m_ItemCount or 1) .. "x id" .. (ItemToString(b) or "?"))
+                                table.insert(buyParts, (b.m_ItemCount or 1) .. "x " .. (ItemToString(b) or "?"))
                             end
                         end
                         local sellParts = {}
                         if t.output then
-                                table.insert(sellParts, (t.output.m_ItemCount or 1) .. "x id" .. (ItemToString(t.output) or "?"))
+                                table.insert(sellParts, (t.output.m_ItemCount or 1) .. "x " .. (ItemToString(t.output) or "?"))
                         end
                         Player:SendMessage(" - 交易 " .. i .. ": 给 " .. table.concat(buyParts, ", ") .. " -> 得到 " .. table.concat(sellParts, ", "))
                     end
+                end
                 else
                     Player:SendMessage("[VillagerTrade] 该村民暂无可用交易（测试数据缺失）。")
                 end
