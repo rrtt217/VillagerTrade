@@ -10,11 +10,11 @@ function RefreshTradesForPlayer(player)
     math.randomseed(os.time() + tonumber(string.sub(player:GetUUID(), 1, 8), 16))
     XpLevels = {0,0,0,0,0,0}
     for i, xp in ipairs(player.TradeExperience) do
-        if xp >= 300 then
+        if xp >= 600 then
             XpLevels[i] = 3
-        elseif xp >= 150 then
+        elseif xp >= 300 then
             XpLevels[i] = 2
-        elseif xp >= 70 then
+        elseif xp >= 100 then
             XpLevels[i] = 1
         else
             XpLevels[i] = 0

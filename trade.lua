@@ -179,6 +179,8 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                         local newInput1 = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
                         Window:SetSlot(Player, 0, newInput1:AddCount(-b.m_ItemCount))
                         Player.TradeExperience[indexProf] = (Player.TradeExperience[indexProf] or 0) + GetXpForTradeEntry(r)
+                        math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
+                        Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6))
                         LOG(" Deducted from input slot 0: ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
                         LOG(" After deduction, Slot 0: ItemType=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType) .. " Count=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount))
                     elseif j == 2 and not tradeAsMuch then
@@ -200,6 +202,8 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                             local newOutputAsMuch = cItem(r.output)
                             Window:SetSlot(Player, 2, newOutputAsMuch:AddCount(r.output.m_ItemCount * HowManyCanTrade - r.output.m_ItemCount))
                             Player.TradeExperience[indexProf] = (Player.TradeExperience[indexProf] or 0) + HowManyCanTrade * GetXpForTradeEntry(r)
+                            math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
+                            Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6) * HowManyCanTrade)
                             LOG(" Completed " .. tostring(HowManyCanTrade) .. " trades")
                             if HandleShiftLeftClick(Window, Player, 2) then
                                 return true
