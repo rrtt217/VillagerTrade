@@ -1,1 +1,0 @@
-078996bf0cdf300394b88de2270212b7 = [[{"inputs":["emerald:0 * 1 - "],"output":"bread:0 * 3 - "},{"inputs":["wheat:0 * 19 - "],"output":"emerald:0 * 1 - "}],null,null,null,null,null]

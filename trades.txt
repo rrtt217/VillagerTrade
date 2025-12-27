@@ -19,6 +19,24 @@
 # <UnlockLevel> = 0~3, like before 1.14.
 # <TradeXp> is a number, like after 1.14. Enough TradeXp
 # <Weight> describes the probability of the trade.(0~1) 
-emerald = bread, (2,4) | 1 | 0 | 0 | 2
-wheat, (18,22) = emerald | 1 | 0 | 0 | 2
-emerald, (5,71) = enchantedbook | 1 | 1 | 1 | 4
+
+wheat, (18,22) = emerald | 0.3 | 0 | 0 | 2
+potato, (15,19) = emerald | 0.3 | 0 | 0 | 2
+carrot, (15,19) = emerald | 0.3 | 0 | 0 | 2
+pumpkin, (8,13) = emerald | 0.3 | 0 | 1 | 2
+melon, (7,12) = emerald | 0.3 | 0 | 2 | 2
+emerald = bread, (2,4) | 0.5 | 0 | 0 | 2
+emerald = pumpkin_pie, (2,3) | 0.5 | 0 | 1 | 2
+emerald = apple, (5,7) | 0.5 | 0 | 2 | 2
+emerald = cookie, (6,10) | 0.5 | 0 | 3 | 2
+emerald = cake, (1,1) | 0.5 | 0 | 3 | 2
+string, (15,20) = emerald | 1 | 0 | 0 | 2
+coal, (16,24) = emerald | 1 | 0 | 0 | 2
+emerald, (6,6) = cooked_fish, (6,6) | 1 | 0 | 0 | 2
+emerald, (7,8) = fishing_rod^0-"ByXpLevels-(5,19)", (1,1) | 1 | 0 | 1 | 2
+wool^0, (16,22) = emerald | 1 | 0 | 0 | 2
+emerald, (3,4) = shears, (1,1) | 1 | 0 | 0 | 2
+emerald, (1,2) = wool, (1,1) | 1 | 0 | 1 | 2
+emerald = arrow, (8,12) | 1 | 0 | 0 | 2
+emerald, (2,3) = bow, (1,1) | 1 | 0 | 1 | 2
+emerald, (1,1); gravel, (10,10) = flint, (6,10) | 1 | 0 | 2 | 2
