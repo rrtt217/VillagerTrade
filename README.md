@@ -7,7 +7,7 @@ This Cuberite Plugin adds "sort of" working villager trade to Cuberite. Unlike V
 - [x] data-driven trade definition
 - [x] trade experience and unlock level
 - [x] save/load player trade xp and trade list
-- [~] shift-right click in trade screen
+- [x] shift-left click in trade screen
 - [ ] shift-right click in trade screen
 - [ ] several bug fixes
 - [ ] remove Herobrine
