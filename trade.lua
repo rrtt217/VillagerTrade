@@ -1,11 +1,18 @@
 -- trade.lua
 
+function DEBUGLOG(a_1,a_2)
+    if DEBUG then
+        LOG(a_1,a_2)
+    end
+end
+
+
 function SyncInventoryToTradeWindow(Window, Player)
     -- 同步玩家物品栏到交易窗口的槽位 3-38
     for i = 4, 40 do
         local item = Player:GetInventory():GetSlot(i)
         if item.m_ItemType ~= -1 then
-            LOG(" Inventory Slot " .. i .. ": ItemType=" .. tostring(item.m_ItemType) .. " Count=" .. tostring(item.m_ItemCount))
+            DEBUGLOG(" Inventory Slot " .. i .. ": ItemType=" .. tostring(item.m_ItemType) .. " Count=" .. tostring(item.m_ItemCount))
         end
         Window:SetSlot(Player, i - 1, item)
     end
@@ -43,8 +50,8 @@ end
 
 function cWindow:GetSlotAfterDrag(Player, SlotNum, ClickedSlotNum)
     if self:GetSlot(Player,SlotNum).m_ItemType == -1 and SlotNum == ClickedSlotNum then
-        LOG("Getting dragging item for slot " .. SlotNum)
-        LOG(" Dragging Item: Type=" .. tostring(Player:GetDraggingItem().m_ItemType) .. " Count=" .. tostring(Player:GetDraggingItem().m_ItemCount))
+        DEBUGLOG("Getting dragging item for slot " .. SlotNum)
+        DEBUGLOG(" Dragging Item: Type=" .. tostring(Player:GetDraggingItem().m_ItemType) .. " Count=" .. tostring(Player:GetDraggingItem().m_ItemCount))
         return Player:GetDraggingItem()
     end
     return self:GetSlot(Player,SlotNum)
@@ -137,30 +144,30 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                 end
             end
         end
-        LOG("Trade check for trade " .. i .. ": match=" .. tostring(match))
+        DEBUGLOG("Trade check for trade " .. i .. ": match=" .. tostring(match))
         if match then
             table.insert(matchedTrades, {trade = r,indexProf = indexProf})
             end
         end
     end
     local matchedTradesCount = #matchedTrades
-    LOG("Total matched trades: " .. tostring(matchedTradesCount))
+    DEBUGLOG("Total matched trades: " .. tostring(matchedTradesCount))
     if matchedTradesCount == 0 then
-        LOG("No matching trades found.")
+        DEBUGLOG("No matching trades found.")
         return
     end
     local selectedIndex = ((SelectedMatch % matchedTradesCount) + matchedTradesCount) % matchedTradesCount + 1
     local r = matchedTrades[selectedIndex].trade
     local indexProf = matchedTrades[selectedIndex].indexProf
-    LOG("Selected trade index: " .. tostring(selectedIndex))
+    DEBUGLOG("Selected trade index: " .. tostring(selectedIndex))
     local hasTrade = false
     if r then
-        LOG("Processing trade:")
+        DEBUGLOG("Processing trade:")
         hasTrade = true
     end
         if hasTrade then
             -- 执行交易：添加输出物品至槽位2
-            LOG("output:" .. tostring(r.output.m_ItemType) .. " Count=" .. tostring(r.output.m_ItemCount))
+            DEBUGLOG("output:" .. tostring(r.output.m_ItemType) .. " Count=" .. tostring(r.output.m_ItemCount))
             if r.output and not tradeAsMuch then
                 -- if Window:GetSlot(Player, 2).m_ItemType ~= -1 then
                 -- else
@@ -170,19 +177,19 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
             end
         end
         local HowManyCanTrade = math.huge
-        LOG("slotnum" .. tostring(SlotNum))
+        DEBUGLOG("slotnum" .. tostring(SlotNum))
         if SlotNum == 2 and hasTrade then
             -- 从输入槽扣除物品
             for j, b in ipairs(r.inputs) do
-                    LOG(tostring(j) .. ": Required ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
+                    DEBUGLOG(tostring(j) .. ": Required ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
                     if j == 1 and not tradeAsMuch then
                         local newInput1 = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
                         Window:SetSlot(Player, 0, newInput1:AddCount(-b.m_ItemCount))
                         Player.TradeExperience[indexProf] = (Player.TradeExperience[indexProf] or 0) + GetXpForTradeEntry(r)
                         math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
                         Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6))
-                        LOG(" Deducted from input slot 0: ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
-                        LOG(" After deduction, Slot 0: ItemType=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType) .. " Count=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount))
+                        DEBUGLOG(" Deducted from input slot 0: ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
+                        DEBUGLOG(" After deduction, Slot 0: ItemType=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType) .. " Count=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount))
                     elseif j == 2 and not tradeAsMuch then
                         local newInput2 = cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum))
                         Window:SetSlot(Player, 1, newInput2:AddCount(-b.m_ItemCount))
@@ -204,7 +211,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                             Player.TradeExperience[indexProf] = (Player.TradeExperience[indexProf] or 0) + HowManyCanTrade * GetXpForTradeEntry(r)
                             math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
                             Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6) * HowManyCanTrade)
-                            LOG(" Completed " .. tostring(HowManyCanTrade) .. " trades")
+                            DEBUGLOG(" Completed " .. tostring(HowManyCanTrade) .. " trades")
                             if HandleShiftLeftClick(Window, Player, 2) then
                                 return true
                             end
@@ -218,13 +225,13 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     -- Window:SetSlot(Player, 0, Window:GetSlot(Player, 0))
     -- Window:SetSlot(Player, 1, Window:GetSlot(Player, 1))
     -- Window:SetSlot(Player, 2, Window:GetSlot(Player, 2))
-    LOG("After trade processing:")
-    LOG(" Input Slot 1: ItemType=" .. tostring(Window:GetSlot(Player, 0).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 0).m_ItemCount))
-    LOG(" Input Slot 2: ItemType=" .. tostring(Window:GetSlot(Player, 1).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 1).m_ItemCount))
-    LOG(" Output Slot: ItemType=" .. tostring(Window:GetSlot(Player, 2).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 2).m_ItemCount))
+    DEBUGLOG("After trade processing:")
+    DEBUGLOG(" Input Slot 1: ItemType=" .. tostring(Window:GetSlot(Player, 0).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 0).m_ItemCount))
+    DEBUGLOG(" Input Slot 2: ItemType=" .. tostring(Window:GetSlot(Player, 1).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 1).m_ItemCount))
+    DEBUGLOG(" Output Slot: ItemType=" .. tostring(Window:GetSlot(Player, 2).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 2).m_ItemCount))
     SyncTradeWindowToInventory(Window, Player)
     SyncInventoryToTradeWindow(Window, Player)
-    LOG("Player " .. Player:GetName() .. " clicked slot " .. SlotNum .. " in trade window. Action: " .. click)
+    DEBUGLOG("Player " .. Player:GetName() .. " clicked slot " .. SlotNum .. " in trade window. Action: " .. click)
     if blocked then
         return true
     end
@@ -233,7 +240,7 @@ end
 function OnCloseTradeWindow(Window, Player)
     SelectedMatch = 0
     -- 处理交易窗口关闭事件的逻辑
-    LOG("Player " .. Player:GetName() .. " closed the trade window.")
+    DEBUGLOG("Player " .. Player:GetName() .. " closed the trade window.")
     -- 在窗口关闭时同步物品栏
     SyncTradeWindowToInventory(Window, Player)
     World = Player:GetWorld()
@@ -253,7 +260,7 @@ function TradeOnRightClickingVillager(Player, Entity)
 
     if Entity:IsMob() then
         tolua:cast(Entity, "cMonster")
-        LOG("Right clicked mob type: " .. Entity:GetMobType())
+        DEBUGLOG("Right clicked mob type: " .. Entity:GetMobType())
         if Entity:GetMobType() == mtVillager then
             -- 按玩家是否潜行决定行为：潜行则不打开 UI，仅发送交易信息
             local prof = "default"
@@ -286,7 +293,7 @@ function TradeOnRightClickingVillager(Player, Entity)
             Player:OpenWindow(VillagerTradeWindow)
             SyncInventoryToTradeWindow(VillagerTradeWindow, Player)
             Inventory = Player:GetInventory()
-            LOG("Opened VillagerTrade window for player " .. Player:GetName())
+            DEBUGLOG("Opened VillagerTrade window for player " .. Player:GetName())
         end
     end
 end

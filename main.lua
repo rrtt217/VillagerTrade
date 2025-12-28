@@ -81,6 +81,7 @@ function Initialize(Plugin)
     cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_JOINED, LoadTradeOnPlayerJoined)
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_DESTROYED, SaveTradeOnPlayerDestroyed)
+    _G.DEBUG = false -- Set to true to enable debug logging
 	return true
 end
 
