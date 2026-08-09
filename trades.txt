@@ -89,3 +89,9 @@ chicken, (14,18) = emerald | 1 | 4 | 0 | 2
 coal, (16,24) = emerald | 1 | 4 | 1 | 5
 emerald = cooked_porkchop, (5,7) | 1 | 4 | 1 | 5
 emerald = cooked_chicken, (6,8) | 0.5 | 4 | 1 | 5
+
+# 村民刷怪蛋交易（v2 新增）
+# 由于村民生成/繁殖未实现，通过交易获得村民刷怪蛋来生成村民。
+# 放在 vtGeneric（通用）职业，因为刷怪蛋是通用机制，不属于特定职业。
+# 物品：spawn_egg^120 = 村民刷怪蛋（E_ITEM_SPAWN_EGG=383, meta=120）
+emerald, (8,12) = spawn_egg^120, (1,1) | 0.3 | 5 | 2 | 10

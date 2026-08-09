@@ -89,8 +89,8 @@ function trades_parser.parseTradesFromFile(filename)
         if line ~= "" and not line:match("^%s*#") then
             local left, right = splitIgnoringQuotes(line)
             if right then
-                LOG("Left: " .. left)
-                LOG("Right: " .. right)
+                DEBUGLOG("Left: " .. left)
+                DEBUGLOG("Right: " .. right)
                 local entry = {inputs = {}, output = {}, weight = nil, unlockLevel = nil, profession = nil, tradeXp = nil}
 
                 for inpart in left:gmatch("[^;]+") do
@@ -107,8 +107,8 @@ function trades_parser.parseTradesFromFile(filename)
                 end
 
                 local outpart, rest = right:match("^([^|]*)|?(.*)$")
-                LOG("Outpart:" .. outpart)
-                LOG("Rest:" .. rest)
+                DEBUGLOG("Outpart:" .. outpart)
+                DEBUGLOG("Rest:" .. rest)
                 outpart = trim(outpart)
                 rest = rest or ""
 
@@ -152,6 +152,7 @@ function trades_parser.parseTradesFromFile(filename)
                 end
 
                 table.insert(Trades, entry)
+                DEBUGLOG("[VillagerTrade][DEBUG] 解析交易: profession=" .. tostring(entry.profession) .. " unlockLevel=" .. tostring(entry.unlockLevel) .. " weight=" .. tostring(entry.weight) .. " tradeXp=" .. tostring(entry.tradeXp) .. " inputs=" .. tostring(#entry.inputs))
             end
         end
     end

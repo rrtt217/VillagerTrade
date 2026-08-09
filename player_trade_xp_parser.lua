@@ -1,3 +1,6 @@
+-- player_trade_xp_parser.lua
+-- v1 数据读取器：读取旧版 player_trade_experience.txt（按玩家 UUID 存储 6 个职业经验）。
+-- 在 v2 中仅用于 v1->v2 数据迁移（由 villager_manager 调用）。
 local player_trade_xp_parser = {}
 function player_trade_xp_parser.LoadPlayerTradeExperience()
     local path = PLUGIN:GetLocalFolder() .. "/player_trade_experience.txt"

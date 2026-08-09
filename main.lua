@@ -1,8 +1,15 @@
 PLUGIN = nil
 
+-- 全局调试日志函数（供所有模块使用；DEBUG 开关在 Initialize 末尾设置）
+function DEBUGLOG(a_1, a_2)
+    if DEBUG then
+        LOG(a_1, a_2)
+    end
+end
+
 function Initialize(Plugin)
 	Plugin:SetName("Trade")
-	Plugin:SetVersion(1)
+	Plugin:SetVersion(2)
 
 	-- Hooks
 
@@ -28,191 +35,124 @@ function Initialize(Plugin)
     _G.Trades = Trades
     LOG("Loaded " .. tostring(#Trades) .. " trades from trades.txt")
     for i, trade in ipairs(Trades) do
-        LOG("Trade " .. i .. ": " .. tostring(trade.inputs[1].item.type) .. " x" .. tostring(trade.inputs[1].min) .. " -> " .. tostring(trade.output.item.type) .. " x" .. tostring(trade.output.min))
+        DEBUGLOG("Trade " .. i .. ": " .. tostring(trade.inputs[1].item.type) .. " x" .. tostring(trade.inputs[1].min) .. " -> " .. tostring(trade.output.item.type) .. " x" .. tostring(trade.output.min))
     end
-    -- Load player trade experience data  
-    local player_trade_xp_parser= require("player_trade_xp_parser")
-    if not player_trade_xp_parser or type(player_trade_xp_parser) ~= "table" or type(player_trade_xp_parser.LoadPlayerTradeExperience) ~= "function" then
-        LOG("Error: could not load player_trade_xp_parser.lua")
+
+    -- 加载 v2 核心模块（村民管理）
+    local villager_manager = require("villager_manager")
+    if not villager_manager or type(villager_manager) ~= "table" then
+        LOG("Error: could not load villager_manager.lua")
         return
     end
-    XpTable = player_trade_xp_parser.LoadPlayerTradeExperience()
-    if XpTable then
-        LOG("Loaded player trade experience data for " .. tostring(#XpTable) .. " players.")
-    else
-        LOG("No player trade experience data loaded.")
-    end
-    _G.XpTable = XpTable
-    local PlayerTrades = {}
-    local pathTrades = PLUGIN:GetLocalFolder() .. "/player_trades.txt"
-    local fileTrades = io.open(pathTrades, "r")
-    if fileTrades then
-        for line in fileTrades:lines() do
-            local uuid, tradesJson = line:match("^(%S+)%s*=%s*(.+)$")
-            if uuid and tradesJson then
-                LOG("Loading trades for player UUID " .. uuid)
-                LOG("Trades JSON: " .. tradesJson)
-                local success, trades = pcall(function() return cJson:Parse(tradesJson) end)
-                if success and trades then
-                    LOG("Successfully parsed trades for player UUID " .. uuid)
-                    PlayerTrades[uuid] = trades
-                end
-            end
-        end
-        fileTrades:close()
-    end
-    PlayerTrades = GeneratePlayerTradesFromSerializable(PlayerTrades)
-    LOG("Loaded player trades for " .. tostring(#PlayerTrades) .. " players.")
-    cRoot:Get():ForEachPlayer(function(player)
-        local uuid = player:GetUUID()
-        if XpTable and XpTable[uuid] then
-            player.TradeExperience = XpTable[uuid]
-        else
-            player.TradeExperience = {0, 0, 0, 0, 0, 0}
-        end
-        LOG("Loaded trade experience for player " .. player:GetName())
+    _G.VillagerManager = villager_manager
+
+    -- 加载村民数据（v2 格式）
+    villager_manager.LoadVillagerData()
+
+    -- 读取 v1 经验数据（用于迁移）
+    local v1XpTable = villager_manager.LoadV1PlayerExperience()
+
+    -- 遍历所有世界，确保村民有标识符，并执行 v1->v2 迁移
+    cRoot:Get():ForEachWorld(function(World)
+        -- 确保所有村民有标识符
+        villager_manager.EnsureAllVillagersHaveIDs(World)
+        -- 执行 v1->v2 迁移（将 v1 经验分配给第一个新分配的对应职业村民）
+        villager_manager.MigrateV1ToV2(World, v1XpTable)
+        return false
     end)
-    _G.PlayerTrades = PlayerTrades
-    -- Hook right-clicking villager to open trade window
-    cRoot:Get():ForEachWorld(RefreshVillagerTrades)
+
+    -- 迁移完成后，将 v1 经验文件重命名为 .bak（避免重复迁移）
+    local v1Path = PLUGIN:GetLocalFolder() .. "/player_trade_experience.txt"
+    if v1XpTable and cFile:IsFile(v1Path) then
+        local bakPath = PLUGIN:GetLocalFolder() .. "/player_trade_experience_v1.bak"
+        os.rename(v1Path, bakPath)
+        LOG("[VillagerTrade] v1 经验文件已重命名为 player_trade_experience_v1.bak")
+    end
+
+    -- 保存迁移后的村民数据
+    villager_manager.SaveVillagerData()
+
+    -- 注册钩子
 ---@diagnostic disable-next-line: param-type-mismatch
-	cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_RIGHT_CLICKING_ENTITY, TradeOnRightClickingVillager)
+    cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_RIGHT_CLICKING_ENTITY, TradeOnRightClickingVillager)
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_JOINED, LoadTradeOnPlayerJoined)
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_DESTROYED, SaveTradeOnPlayerDestroyed)
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.AddHook(cPluginManager.HOOK_CRAFTING_NO_RECIPE, OnCraftingNoRecipe)
+
+    -- 启动交易刷新（基于 Age）
+    cRoot:Get():ForEachWorld(RefreshVillagerTrades)
+
     _G.DEBUG = false -- Set to true to enable debug logging
 	return true
 end
 
-function MyItemToFullString(item)
-    local itemStr = string.format("%s:%d * %d - %s", ItemToString(item), item.m_ItemDamage, item.m_ItemCount, item.m_Enchantments:ToString())
-    return itemStr
-end
+-- ============================================================================
+-- 村民刷怪蛋合成配方（通过 HOOK_CRAFTING_NO_RECIPE 提供）
+-- ============================================================================
+-- 配方：村民刷怪蛋（E_ITEM_SPAWN_EGG, meta=120）
+-- 材料：绿宝石 + 鸡蛋（可配置开关见下方 EnableVillagerSpawnEggCrafting）
+-- 由于 cCraftingRecipes 未导出到 Lua，无法直接添加内置配方，只能通过此钩子动态提供。
+local EnableVillagerSpawnEggCrafting = true  -- 可配置开关
 
-function MyFullStringToItem(itemStr)
-    local itemType, itemDamage, itemCount, enchantmentsStr = itemStr:match("^(.-):(%d+)%s*%*%s*(%d+)%s*-%s*(.*)$")
-    if not itemType or not itemDamage or not itemCount then
-        return nil
-    end
-    local item = cItem()
-    StringToItem(itemType, item)
-    item.m_ItemDamage = tonumber(itemDamage) or 0
-    item.m_ItemCount = tonumber(itemCount) or 1
-    if enchantmentsStr and enchantmentsStr ~= "" then
-        item.m_Enchantments = cEnchantments(enchantmentsStr)
-    end
-    return item
-end
+-- 村民刷怪蛋物品 ID 与 meta
+local VILLAGER_SPAWN_EGG_ITEM = 383  -- E_ITEM_SPAWN_EGG
+local VILLAGER_SPAWN_EGG_META = 120  -- E_META_SPAWN_EGG_VILLAGER
 
-function ConvertPlayerTradesToSerializable()
-    local serializableTrades = {}
-    for uuid, trades in pairs(PlayerTrades) do
-        serializableTrades[uuid] = {}
-        for profIndex, profTrades in pairs(trades) do
-            serializableTrades[uuid][profIndex] = {}
-            for i, trade in ipairs(profTrades) do
-                local serializableInputs = {}
-                if not trade.inputs then break end
-                for j, input in ipairs(trade.inputs) do
-                    serializableInputs[j] = MyItemToFullString(input)
-                end
-                local serializableOutput = MyItemToFullString(trade.output)
-                serializableTrades[uuid][profIndex][i] = {["inputs"] = serializableInputs, ["output"] = serializableOutput}
-            end
-        end
+function OnCraftingNoRecipe(Player, Grid, Recipe)
+    if not EnableVillagerSpawnEggCrafting then
+        return false
     end
-    return serializableTrades
-end
 
-function GeneratePlayerTradesFromSerializable(serializableTrades)
-    local playerTrades = {}
-    for uuid, trades in pairs(serializableTrades) do
-        playerTrades[uuid] = {}
-        LOG("Generating trades for player UUID " .. uuid)
-        LOG("Trades data: " .. cJson:Serialize(trades,{indentation = ""}))
-        for profIndex, profTrades in pairs(trades) do
-            playerTrades[uuid][profIndex] = {}
-            for i, trade in ipairs(profTrades) do
-                local deserializedInputs = {}
-                for j, inputStr in ipairs(trade.inputs) do
-                    local item = MyFullStringToItem(inputStr)
-                    deserializedInputs[j] = item
-                end
-                local outputItem = MyFullStringToItem(trade.output)
-                LOG(MyItemToFullString(outputItem or cItem()) )
-                playerTrades[uuid][profIndex][i] = {inputs = deserializedInputs, output = outputItem}
-                LOG("  Trade " .. i .. ":")
-                for j, input in ipairs(deserializedInputs) do
-                    LOG("    Input " .. j .. ": " .. MyItemToFullString(input))
+    -- 检查 2x2 合成格：绿宝石 + 鸡蛋
+    -- Grid 是 cCraftingGrid，用 GetItem(x, y) 读取（x,y 从 0 开始）
+    local emeraldCount = 0
+    local eggCount = 0
+    local totalItems = 0
+    local width = Grid:GetWidth()
+    local height = Grid:GetHeight()
+    for y = 0, height - 1 do
+        for x = 0, width - 1 do
+            local item = Grid:GetItem(x, y)
+            if item.m_ItemType ~= -1 then
+                totalItems = totalItems + 1
+                if item.m_ItemType == 388 then  -- E_ITEM_EMERALD
+                    emeraldCount = emeraldCount + item.m_ItemCount
+                elseif item.m_ItemType == 344 then  -- E_ITEM_EGG
+                    eggCount = eggCount + item.m_ItemCount
                 end
             end
         end
     end
-    LOG("Generated player trades from serializable data.")
-    LOG("Player Trades: " .. cJson:Serialize(playerTrades,{indentation = ""}))
-    return playerTrades
+
+    -- 配方：1 绿宝石 + 1 鸡蛋 = 1 村民刷怪蛋
+    if totalItems == 2 and emeraldCount >= 1 and eggCount >= 1 then
+        Recipe:SetResult(VILLAGER_SPAWN_EGG_ITEM, 1, VILLAGER_SPAWN_EGG_META)
+        return true
+    end
+
+    return false
 end
 
 -- @param Player cPlayer
+-- v2：交易按村民存储，玩家加入时无需加载交易列表。
 function LoadTradeOnPlayerJoined(Player)
-    local uuid = Player:GetUUID()
-    if XpTable and XpTable[uuid] then
-        Player.TradeExperience = XpTable[uuid]
-    else
-        Player.TradeExperience = {0, 0, 0, 0, 0, 0}
-    end
-    LOG("Loaded trade experience for player " .. Player:GetName())
-    for i, xp in ipairs(Player.TradeExperience) do
-        LOG("  Profession " .. i .. ": " .. tostring(xp) .. " XP")
-    end
-    if PlayerTrades[Player:GetUUID()] then
-        Player.trades = PlayerTrades[Player:GetUUID()]
-    else
-        RefreshTradesForPlayer(Player)
-    end
+    -- 空操作（保留钩子以兼容）
 end
 
 -- @param Player cPlayer
+-- v2：交易按村民存储，玩家销毁时无需保存交易列表。
 function SaveTradeOnPlayerDestroyed(Player)
-    if XpTable then
-        local uuid = Player:GetUUID()
-        XpTable[uuid] = Player.TradeExperience
-    end
-    LOG("Saved trade experience for player " .. Player:GetName())
-    for i, xp in ipairs(Player.TradeExperience) do
-        LOG("  Profession " .. i .. ": " .. tostring(xp) .. " XP")
-    end
-    PlayerTrades[Player:GetUUID()] = Player.trades
+    -- 空操作（保留钩子以兼容）
 end
 
 function OnDisable()
-    LOG("Saving player trade experience data...")
-    cRoot:Get():ForEachPlayer(function(player)
-        SaveTradeOnPlayerDestroyed(player)
-    end)
-    local path = PLUGIN:GetLocalFolder() .. "/player_trade_experience.txt"
-    local file = io.open(path, "w")
-    if file then
-        for uuid, xpList in pairs(XpTable) do
-            local line = uuid .. " = "
-            for i, xp in ipairs(xpList) do
-                line = line .. tostring(xp)
-                if i < #xpList then
-                    line = line .. " | "
-                end
-            end
-            file:write(line .. "\n")
-        end
-        file:close()
-    end
-    local pathTrades = PLUGIN:GetLocalFolder() .. "/player_trades.txt"
-    local fileTrades = io.open(pathTrades, "w")
-    if fileTrades then
-        for uuid, trades in pairs(ConvertPlayerTradesToSerializable()) do
-            fileTrades:write(uuid .. " = " .. cJson:Serialize(trades,{indentation = ""}) .. "\n")
-        end
-        fileTrades:close()
+    LOG("Saving villager data...")
+    -- 保存村民数据（经验、上次刷新Age）
+    if VillagerManager then
+        VillagerManager.SaveVillagerData()
     end
     LOG("Shutting down...")
 end

@@ -124,9 +124,10 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
     end
     SyncTradeWindowToInventory(Window, Player)
     SyncInventoryToTradeWindow(Window, Player)
+    -- 使用当前村民的交易列表（v2：按村民 ID）
+    local currentVillagerTrades = GetVillagerTrades(CurrentVillagerID)
     local matchedTrades = {}
-    for indexProf, profTrades in ipairs(Player.trades) do
-    for i, r in ipairs(profTrades) do
+    for i, r in ipairs(currentVillagerTrades or {}) do
         -- 检查输入物品是否匹配交易要求
         local match = true
         if r.inputs then
@@ -146,8 +147,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
         end
         DEBUGLOG("Trade check for trade " .. i .. ": match=" .. tostring(match))
         if match then
-            table.insert(matchedTrades, {trade = r,indexProf = indexProf})
-            end
+            table.insert(matchedTrades, {trade = r, indexProf = i})
         end
     end
     local matchedTradesCount = #matchedTrades
@@ -185,7 +185,10 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                     if j == 1 and not tradeAsMuch then
                         local newInput1 = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
                         Window:SetSlot(Player, 0, newInput1:AddCount(-b.m_ItemCount))
-                        Player.TradeExperience[indexProf] = (Player.TradeExperience[indexProf] or 0) + GetXpForTradeEntry(r)
+                        -- v2：经验加到村民数据上
+                        local vData = VillagerManager.GetVillagerData(CurrentVillagerID)
+                        local vProf = vData.profession
+                        vData.xp[vProf + 1] = (vData.xp[vProf + 1] or 0) + GetXpForTradeEntry(r)
                         math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
                         Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6))
                         DEBUGLOG(" Deducted from input slot 0: ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
@@ -208,7 +211,10 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                             Window:SetSlot(Player, 1, newInput2AsMuch:AddCount(-b.m_ItemCount * HowManyCanTrade))
                             local newOutputAsMuch = cItem(r.output)
                             Window:SetSlot(Player, 2, newOutputAsMuch:AddCount(r.output.m_ItemCount * HowManyCanTrade - r.output.m_ItemCount))
-                            Player.TradeExperience[indexProf] = (Player.TradeExperience[indexProf] or 0) + HowManyCanTrade * GetXpForTradeEntry(r)
+                            -- v2：经验加到村民数据上
+                            local vData2 = VillagerManager.GetVillagerData(CurrentVillagerID)
+                            local vProf2 = vData2.profession
+                            vData2.xp[vProf2 + 1] = (vData2.xp[vProf2 + 1] or 0) + HowManyCanTrade * GetXpForTradeEntry(r)
                             math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
                             Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6) * HowManyCanTrade)
                             DEBUGLOG(" Completed " .. tostring(HowManyCanTrade) .. " trades")
@@ -239,6 +245,7 @@ end
 
 function OnCloseTradeWindow(Window, Player)
     SelectedMatch = 0
+    CurrentVillagerID = nil
     -- 处理交易窗口关闭事件的逻辑
     DEBUGLOG("Player " .. Player:GetName() .. " closed the trade window.")
     -- 在窗口关闭时同步物品栏
@@ -250,7 +257,7 @@ function OnCloseTradeWindow(Window, Player)
 end
 
 --- @param Player cPlayer
---- @param Entity cEntity
+--- @param Entity cMonster
 function TradeOnRightClickingVillager(Player, Entity)
     -- 尝试打开交易窗口并列出可用测试交易（如果定义了）
     VillagerTradeWindow = cLuaWindow(cWindow.wtNPCTrade,10,10,"Villager Trade")
@@ -259,16 +266,26 @@ function TradeOnRightClickingVillager(Player, Entity)
     -- 加载插件目录下的 villager_trades.lua（如果存在）
 
     if Entity:IsMob() then
-        tolua:cast(Entity, "cMonster")
         DEBUGLOG("Right clicked mob type: " .. Entity:GetMobType())
         if Entity:GetMobType() == mtVillager then
+            -- 阻止玩家给村民命名（手持命名牌右键村民时，返回 true 阻止默认命名处理）
+            local heldItem = Player:GetEquippedItem()
+            if heldItem.m_ItemType == 421 then  -- E_ITEM_NAME_TAG
+                Player:SendMessage("[VillagerTrade] 该村民已被插件管理，无法命名。")
+                return true
+            end
+
+            -- 确保村民有唯一标识符，并记录当前交易的村民
+            local villagerID = VillagerManager.EnsureVillagerID(Entity)
+            CurrentVillagerID = villagerID
+
             -- 按玩家是否潜行决定行为：潜行则不打开 UI，仅发送交易信息
-            local prof = "default"
             if Player:IsCrouched() then
-                if Player.trades then
+                local trades = GetVillagerTrades(villagerID)
+                DEBUGLOG("[VillagerTrade][DEBUG] 潜行查看村民 " .. villagerID .. " 交易，共 " .. tostring(#trades) .. " 条")
+                if trades and #trades > 0 then
                     Player:SendMessage("[VillagerTrade] 可用交易：")
-                    for indexProf, tradesProf in ipairs(Player.trades) do
-                    for i, t in ipairs(tradesProf) do
+                    for i, t in ipairs(trades) do
                         local buyParts = {}
                         if t.inputs then
                             for _, b in ipairs(t.inputs) do
@@ -281,9 +298,8 @@ function TradeOnRightClickingVillager(Player, Entity)
                         end
                         Player:SendMessage(" - 交易 " .. i .. ": 给 " .. table.concat(buyParts, ", ") .. " -> 得到 " .. table.concat(sellParts, ", "))
                     end
-                end
                 else
-                    Player:SendMessage("[VillagerTrade] 该村民暂无可用交易（测试数据缺失）。")
+                    Player:SendMessage("[VillagerTrade] 该村民暂无可用交易。")
                 end
                 return
             end
