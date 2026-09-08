@@ -22,8 +22,9 @@ end
 local function BuildTradeItem(itemSpec, min, max)
     local item = cItem()
     if tonumber(itemSpec.type) == nil then
-        if StringToItem(itemSpec.type, item) then
-            DEBUGLOG("Converted item string to item: " .. itemSpec.type)
+        if not StringToItem(itemSpec.type, item) then
+            LOGWARNING("trades.txt 中无法识别的物品名: " .. tostring(itemSpec.type)
+                .. "（该交易会生成空物品，请检查拼写）")
         end
     else
         item = cItem(tonumber(itemSpec.type))
@@ -38,7 +39,8 @@ local function BuildTradeItem(itemSpec, min, max)
     if itemSpec.enchantments and not itemSpec.enchantments:match("ByXpLevels") then
         item.m_Enchantments = cEnchantments(itemSpec.enchantments)
     elseif itemSpec.enchantments and itemSpec.enchantments:match("ByXpLevels") then
-        local enchantLevelMin, enchantLevelMax = itemSpec.enchantments:match("ByXpLevels%((%d+),%s*(%d+)%)")
+        -- 兼容 "ByXpLevels(5,19)" 与 "ByXpLevels-(5,45)" 两种写法（原模式漏了可选的 '-'）
+        local enchantLevelMin, enchantLevelMax = itemSpec.enchantments:match("ByXpLevels%-?%((%d+),%s*(%d+)%)")
         local enchantLevel = math.random(tonumber(enchantLevelMin) or 0, tonumber(enchantLevelMax) or 0)
         item:EnchantByXPLevels(enchantLevel)
     end
@@ -51,15 +53,14 @@ function GenerateTradesForVillager(villagerID)
     local data = VillagerManager.GetVillagerData(villagerID)
     local profession = data.profession
     local level = GetXpLevel(data.xp[profession + 1] or 0)
-    DEBUGLOG("[VillagerTrade][DEBUG] GenerateTradesForVillager: id=" .. tostring(villagerID) .. " profession=" .. tostring(profession) .. " level=" .. tostring(level) .. " xp=" .. tostring(data.xp[profession + 1] or 0))
+    DEBUGLOG("[DEBUG] GenerateTradesForVillager: id=" .. tostring(villagerID) .. " profession=" .. tostring(profession) .. " level=" .. tostring(level) .. " xp=" .. tostring(data.xp[profession + 1] or 0))
 
     local trades = {}
     local totalTrades = 0
     local matchedProfession = 0
     local matchedLevel = 0
     local matchedWeight = 0
-    for entry in pairs(Trades or {}) do
-        local trade = Trades[entry]
+    for _, trade in ipairs(Trades or {}) do
         if trade then
             totalTrades = totalTrades + 1
             local tradeProfession = trade.profession
@@ -82,7 +83,7 @@ function GenerateTradesForVillager(villagerID)
             end
         end
     end
-    DEBUGLOG("[VillagerTrade][DEBUG] GenerateTradesForVillager 结果: id=" .. tostring(villagerID) .. " 总交易=" .. tostring(totalTrades) .. " 职业匹配=" .. tostring(matchedProfession) .. " 等级匹配=" .. tostring(matchedLevel) .. " 权重匹配=" .. tostring(matchedWeight) .. " 生成=" .. tostring(#trades))
+    DEBUGLOG("[DEBUG] GenerateTradesForVillager 结果: id=" .. tostring(villagerID) .. " 总交易=" .. tostring(totalTrades) .. " 职业匹配=" .. tostring(matchedProfession) .. " 等级匹配=" .. tostring(matchedLevel) .. " 权重匹配=" .. tostring(matchedWeight) .. " 生成=" .. tostring(#trades))
     return trades
 end
 
@@ -93,7 +94,7 @@ function RefreshVillagerTradesForVillager(villager, World)
     local id = VillagerManager.EnsureVillagerID(villager)
     local data = VillagerManager.GetVillagerData(id)
     local worldAge = World:GetWorldAge()
-    DEBUGLOG("[VillagerTrade][DEBUG] RefreshVillagerTradesForVillager: id=" .. tostring(id) .. " worldAge=" .. tostring(worldAge) .. " lastRefreshAge=" .. tostring(data.lastRefreshAge) .. " profession=" .. tostring(data.profession))
+    DEBUGLOG("[DEBUG] RefreshVillagerTradesForVillager: id=" .. tostring(id) .. " worldAge=" .. tostring(worldAge) .. " lastRefreshAge=" .. tostring(data.lastRefreshAge) .. " profession=" .. tostring(data.profession))
 
     -- 判断是否需要刷新：上次刷新世界年龄为空，或世界年龄增长超过阈值
     local shouldRefresh = false
@@ -107,14 +108,15 @@ function RefreshVillagerTradesForVillager(villager, World)
     end
 
     if shouldRefresh then
-        -- 用村民 ID 作为随机种子，保证同一村民刷新结果稳定
-        local seedPart = tonumber(string.sub(id, -8), 16) or 0
+        -- 用村民 ID 后缀（36 进制）作为随机种子的一部分
+        local suffix = tostring(id):match("%-(%w+)$")
+        local seedPart = (suffix and tonumber(suffix, 36)) or 0
         math.randomseed(os.time() + seedPart)
         VillagerTrades[id] = GenerateTradesForVillager(id)
         data.lastRefreshAge = worldAge
-        DEBUGLOG("[VillagerTrade] 刷新村民 " .. id .. " 的交易（worldAge=" .. tostring(worldAge) .. "），共 " .. tostring(#VillagerTrades[id]) .. " 条")
+        DEBUGLOG("刷新村民 " .. id .. " 的交易（worldAge=" .. tostring(worldAge) .. "），共 " .. tostring(#VillagerTrades[id]) .. " 条")
     else
-        DEBUGLOG("[VillagerTrade][DEBUG] 村民 " .. id .. " 未到刷新时间（ageDiff=" .. tostring(worldAge - (data.lastRefreshAge or 0)) .. " < " .. tostring(REFRESH_AGE_INTERVAL) .. "）")
+        DEBUGLOG("[DEBUG] 村民 " .. id .. " 未到刷新时间（ageDiff=" .. tostring(worldAge - (data.lastRefreshAge or 0)) .. " < " .. tostring(REFRESH_AGE_INTERVAL) .. "）")
     end
 end
 
@@ -127,6 +129,10 @@ function RefreshVillagerTrades(World)
         end
         return false
     end)
+    -- 顺带做定期落盘（默认 5 分钟一次），避免服务器崩溃丢失全部村民 XP
+    if VillagerManager and VillagerManager.SaveVillagerDataIfDue then
+        VillagerManager.SaveVillagerDataIfDue()
+    end
     -- 定时再次刷新
     World:ScheduleTask(20 * 20, RefreshVillagerTrades)  -- 每 20 秒检查一次
 end
@@ -134,13 +140,13 @@ end
 -- 获取村民的交易列表（若未生成则先生成）
 function GetVillagerTrades(villagerID)
     if not villagerID then
-        DEBUGLOG("[VillagerTrade][DEBUG] GetVillagerTrades: villagerID 为 nil")
+        DEBUGLOG("[DEBUG] GetVillagerTrades: villagerID 为 nil")
         return {}
     end
     if not VillagerTrades[villagerID] then
-        DEBUGLOG("[VillagerTrade][DEBUG] GetVillagerTrades: 村民 " .. villagerID .. " 无缓存交易，重新生成")
+        DEBUGLOG("[DEBUG] GetVillagerTrades: 村民 " .. villagerID .. " 无缓存交易，重新生成")
         VillagerTrades[villagerID] = GenerateTradesForVillager(villagerID)
     end
-    DEBUGLOG("[VillagerTrade][DEBUG] GetVillagerTrades: 村民 " .. villagerID .. " 返回 " .. tostring(#VillagerTrades[villagerID]) .. " 条交易")
+    DEBUGLOG("[DEBUG] GetVillagerTrades: 村民 " .. villagerID .. " 返回 " .. tostring(#VillagerTrades[villagerID]) .. " 条交易")
     return VillagerTrades[villagerID]
 end

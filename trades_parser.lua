@@ -152,7 +152,7 @@ function trades_parser.parseTradesFromFile(filename)
                 end
 
                 table.insert(Trades, entry)
-                DEBUGLOG("[VillagerTrade][DEBUG] 解析交易: profession=" .. tostring(entry.profession) .. " unlockLevel=" .. tostring(entry.unlockLevel) .. " weight=" .. tostring(entry.weight) .. " tradeXp=" .. tostring(entry.tradeXp) .. " inputs=" .. tostring(#entry.inputs))
+                DEBUGLOG("[DEBUG] 解析交易: profession=" .. tostring(entry.profession) .. " unlockLevel=" .. tostring(entry.unlockLevel) .. " weight=" .. tostring(entry.weight) .. " tradeXp=" .. tostring(entry.tradeXp) .. " inputs=" .. tostring(#entry.inputs))
             end
         end
     end

@@ -1,31 +1,45 @@
 -- trade.lua
+-- v2.1 修复：
+--   * 交易窗口/村民 ID/交易选择按玩家隔离（原为全局单例，多人互相破坏）
+--   * 窗口尺寸改为 3x1（3 槽 + 玩家背包 36 槽 = 39 槽），与客户端村民交易窗口一致，
+--     不再向窗口写入玩家背包的镜像（原 10x10 窗口槽位数与客户端预期不符，会导致槽位错乱/物品丢失）
+--   * Shift+左键“尽量交易”按各输入自身的需求量扣减（原实现对两个输入槽重复扣减）
+--   * UUID 为空时不再因 tonumber 返回 nil 而报错
+--   * 关窗时只掉落非空的输入槽物品
 
-function DEBUGLOG(a_1,a_2)
-    if DEBUG then
-        LOG(a_1,a_2)
+-- 每个玩家的交易会话：key = UUID（无 UUID 时回退到玩家名）
+--   { window = cLuaWindow, villagerID = string, selectedMatch = number }
+local TradeSessions = {}
+
+local function GetSessionKey(Player)
+    local uuid = Player:GetUUID()
+    if uuid == nil or uuid == "" then
+        return "name:" .. Player:GetName()
     end
+    return uuid
 end
 
-
-function SyncInventoryToTradeWindow(Window, Player)
-    -- 同步玩家物品栏到交易窗口的槽位 3-38
-    for i = 4, 40 do
-        local item = Player:GetInventory():GetSlot(i)
-        if item.m_ItemType ~= -1 then
-            DEBUGLOG(" Inventory Slot " .. i .. ": ItemType=" .. tostring(item.m_ItemType) .. " Count=" .. tostring(item.m_ItemCount))
-        end
-        Window:SetSlot(Player, i - 1, item)
+local function GetSession(Player)
+    local key = GetSessionKey(Player)
+    local session = TradeSessions[key]
+    if not session then
+        session = { window = nil, villagerID = nil, selectedMatch = 0 }
+        TradeSessions[key] = session
     end
+    return session
 end
 
-function SyncTradeWindowToInventory(Window, Player)
-    -- 同步交易窗口的槽位 3-38 回玩家物品栏
-    for i = 4, 40 do
-        local item = Window:GetSlot(Player, i - 1)
-        Player:GetInventory():SetSlot(i, item)
+-- 用玩家 UUID 前 8 位作随机种子；UUID 为空（离线 / 无 Mojang 账号）时退回 os.time()
+local function ReseedRandom(Player)
+    local seedPart = 0
+    local uuid = Player:GetUUID()
+    if uuid and uuid ~= "" then
+        seedPart = tonumber(string.sub(uuid, 1, 8), 16) or 0
     end
+    math.randomseed(os.time() + seedPart)
 end
 
+-- 根据交易条目反查 trades.txt 中定义的 tradeXp
 function GetXpForTradeEntry(Entry)
     for i, entryTrades in ipairs(Trades or {}) do
         local match = true
@@ -47,26 +61,22 @@ function GetXpForTradeEntry(Entry)
     return 2
 end
 
-
+-- 取槽位内容；若该槽为空且玩家正把物品拖到该槽上，则返回被拖动的物品
+-- （点击回调在默认处理之前触发，此时槽位还是空的）
 function cWindow:GetSlotAfterDrag(Player, SlotNum, ClickedSlotNum)
-    if self:GetSlot(Player,SlotNum).m_ItemType == -1 and SlotNum == ClickedSlotNum then
-        DEBUGLOG("Getting dragging item for slot " .. SlotNum)
-        DEBUGLOG(" Dragging Item: Type=" .. tostring(Player:GetDraggingItem().m_ItemType) .. " Count=" .. tostring(Player:GetDraggingItem().m_ItemCount))
+    if self:GetSlot(Player, SlotNum).m_ItemType == -1 and SlotNum == ClickedSlotNum then
         return Player:GetDraggingItem()
     end
-    return self:GetSlot(Player,SlotNum)
+    return self:GetSlot(Player, SlotNum)
 end
 
+-- Shift + 左键：把指定槽位的物品移到快捷栏（窗口槽 30-38 即玩家快捷栏 0-8）
 function HandleShiftLeftClick(Window, Player, SlotNum)
-    -- 处理 Shift + 左键点击的逻辑
-    -- 尝试移动至快捷栏 30-38, 失败则返回true阻止操作
     local item = Window:GetSlot(Player, SlotNum)
-    if SlotNum < 3 then
-        LowerBound = 30
-    else
-        LowerBound = 30
+    if item.m_ItemType == -1 then
+        return false
     end
-    for hotbarSlot = LowerBound, 38 do
+    for hotbarSlot = 30, 38 do
         local invItem = Window:GetSlot(Player, hotbarSlot)
         if invItem.m_ItemType == -1 then
             -- 空位，直接移动
@@ -93,39 +103,33 @@ function HandleShiftLeftClick(Window, Player, SlotNum)
 end
 
 function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
-    -- 处理交易窗口点击事件的逻辑
-    -- 同步玩家物品栏到交易窗口的槽位 5-39
+    local session = GetSession(Player)
     local click = ClickActionToString(ClickAction)
     local tradeAsMuch = false
     local blocked = false
+
     if click == "caShiftLeftClick" then
         if SlotNum == 2 then
-            -- 尝试一次性完成交易
+            -- 一次性完成尽可能多的交易
             tradeAsMuch = true
-        else
-            if HandleShiftLeftClick(Window, Player, SlotNum) then
-                return true
-            end
+        elseif HandleShiftLeftClick(Window, Player, SlotNum) then
+            return true
         end
-        SyncTradeWindowToInventory(Window, Player)
     end
     if click == "caShiftRightClick" and SlotNum < 3 then
-        -- 阻止 Shift + 右键点击操作
+        -- 阻止 Shift + 右键点击交易槽
         return true
     end
-    if SlotNum == 30 then
-       -- 临时修复措施：未知问题导致点击槽30时物品丢失，阻止该操作
-        if click == "caLeftClick" then
-            SelectedMatch = SelectedMatch + 1
-        elseif click == "caRightClick" then
-            SelectedMatch = SelectedMatch - 1
-        end
-        blocked = true
+
+    -- 右键点击输出槽：在“当前输入可匹配的多条交易”之间循环切换（不执行交易）
+    local cycleOnly = false
+    if SlotNum == 2 and click == "caRightClick" then
+        session.selectedMatch = session.selectedMatch + 1
+        cycleOnly = true
     end
-    SyncTradeWindowToInventory(Window, Player)
-    SyncInventoryToTradeWindow(Window, Player)
-    -- 使用当前村民的交易列表（v2：按村民 ID）
-    local currentVillagerTrades = GetVillagerTrades(CurrentVillagerID)
+
+    -- 使用当前玩家正在交易的村民的交易列表（按玩家隔离）
+    local currentVillagerTrades = GetVillagerTrades(session.villagerID)
     local matchedTrades = {}
     for i, r in ipairs(currentVillagerTrades or {}) do
         -- 检查输入物品是否匹配交易要求
@@ -145,171 +149,156 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
                 end
             end
         end
-        DEBUGLOG("Trade check for trade " .. i .. ": match=" .. tostring(match))
         if match then
             table.insert(matchedTrades, {trade = r, indexProf = i})
         end
     end
+
     local matchedTradesCount = #matchedTrades
     DEBUGLOG("Total matched trades: " .. tostring(matchedTradesCount))
     if matchedTradesCount == 0 then
         DEBUGLOG("No matching trades found.")
-        return
+        return cycleOnly
     end
-    local selectedIndex = ((SelectedMatch % matchedTradesCount) + matchedTradesCount) % matchedTradesCount + 1
+
+    local selectedIndex = ((session.selectedMatch % matchedTradesCount) + matchedTradesCount) % matchedTradesCount + 1
     local r = matchedTrades[selectedIndex].trade
-    local indexProf = matchedTrades[selectedIndex].indexProf
-    DEBUGLOG("Selected trade index: " .. tostring(selectedIndex))
-    local hasTrade = false
-    if r then
-        DEBUGLOG("Processing trade:")
-        hasTrade = true
+    if not r then
+        return cycleOnly
     end
-        if hasTrade then
-            -- 执行交易：添加输出物品至槽位2
-            DEBUGLOG("output:" .. tostring(r.output.m_ItemType) .. " Count=" .. tostring(r.output.m_ItemCount))
-            if r.output and not tradeAsMuch then
-                -- if Window:GetSlot(Player, 2).m_ItemType ~= -1 then
-                -- else
-                    -- 输出槽为空，放入新物品
-                    Window:SetSlot(Player, 2, r.output)
-                -- end
+
+    -- 展示当前选中的交易结果
+    if r.output and not tradeAsMuch then
+        Window:SetSlot(Player, 2, r.output)
+    end
+
+    if SlotNum ~= 2 then
+        return cycleOnly
+    end
+    if cycleOnly then
+        return true -- 只切换显示，不执行交易
+    end
+
+    if tradeAsMuch then
+        -- 计算最大可交易次数：所有输入中能凑出的最小次数
+        local HowManyCanTrade = math.huge
+        for j, b in ipairs(r.inputs or {}) do
+            if j <= 2 and b.m_ItemCount > 0 then
+                local slot = (j == 1) and 0 or 1
+                local possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, slot, SlotNum).m_ItemCount / b.m_ItemCount)
+                HowManyCanTrade = math.min(HowManyCanTrade, possibleTrades)
             end
         end
-        local HowManyCanTrade = math.huge
-        DEBUGLOG("slotnum" .. tostring(SlotNum))
-        if SlotNum == 2 and hasTrade then
-            -- 从输入槽扣除物品
-            for j, b in ipairs(r.inputs) do
-                    DEBUGLOG(tostring(j) .. ": Required ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
-                    if j == 1 and not tradeAsMuch then
-                        local newInput1 = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
-                        Window:SetSlot(Player, 0, newInput1:AddCount(-b.m_ItemCount))
-                        -- v2：经验加到村民数据上
-                        local vData = VillagerManager.GetVillagerData(CurrentVillagerID)
-                        local vProf = vData.profession
-                        vData.xp[vProf + 1] = (vData.xp[vProf + 1] or 0) + GetXpForTradeEntry(r)
-                        math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
-                        Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6))
-                        DEBUGLOG(" Deducted from input slot 0: ItemType=" .. tostring(b.m_ItemType) .. " Count=" .. tostring(b.m_ItemCount))
-                        DEBUGLOG(" After deduction, Slot 0: ItemType=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemType) .. " Count=" .. tostring(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount))
-                    elseif j == 2 and not tradeAsMuch then
-                        local newInput2 = cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum))
-                        Window:SetSlot(Player, 1, newInput2:AddCount(-b.m_ItemCount))
-                    elseif tradeAsMuch then
-                        local possibleTrades = math.huge
-                        if j == 1 then
-                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 0, SlotNum).m_ItemCount / b.m_ItemCount)
-                        elseif j == 2 then
-                            possibleTrades = math.floor(Window:GetSlotAfterDrag(Player, 1, SlotNum).m_ItemCount / b.m_ItemCount)
-                        end
-                        HowManyCanTrade = math.min(HowManyCanTrade, possibleTrades)
-                        if HowManyCanTrade > 0 then
-                            local newInput1AsMuch = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
-                            Window:SetSlot(Player, 0, newInput1AsMuch:AddCount(-b.m_ItemCount * HowManyCanTrade))
-                            local newInput2AsMuch = cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum))
-                            Window:SetSlot(Player, 1, newInput2AsMuch:AddCount(-b.m_ItemCount * HowManyCanTrade))
-                            local newOutputAsMuch = cItem(r.output)
-                            Window:SetSlot(Player, 2, newOutputAsMuch:AddCount(r.output.m_ItemCount * HowManyCanTrade - r.output.m_ItemCount))
-                            -- v2：经验加到村民数据上
-                            local vData2 = VillagerManager.GetVillagerData(CurrentVillagerID)
-                            local vProf2 = vData2.profession
-                            vData2.xp[vProf2 + 1] = (vData2.xp[vProf2 + 1] or 0) + HowManyCanTrade * GetXpForTradeEntry(r)
-                            math.randomseed(os.time() + tonumber(string.sub(Player:GetUUID(), 1, 8), 16))
-                            Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6) * HowManyCanTrade)
-                            DEBUGLOG(" Completed " .. tostring(HowManyCanTrade) .. " trades")
-                            if HandleShiftLeftClick(Window, Player, 2) then
-                                return true
-                            end
-                        else
-                            return true
-                        end
-                    end
-                end
+        if HowManyCanTrade == math.huge or HowManyCanTrade < 1 then
+            return true
         end
-    -- 更新窗口槽位
-    -- Window:SetSlot(Player, 0, Window:GetSlot(Player, 0))
-    -- Window:SetSlot(Player, 1, Window:GetSlot(Player, 1))
-    -- Window:SetSlot(Player, 2, Window:GetSlot(Player, 2))
-    DEBUGLOG("After trade processing:")
-    DEBUGLOG(" Input Slot 1: ItemType=" .. tostring(Window:GetSlot(Player, 0).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 0).m_ItemCount))
-    DEBUGLOG(" Input Slot 2: ItemType=" .. tostring(Window:GetSlot(Player, 1).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 1).m_ItemCount))
-    DEBUGLOG(" Output Slot: ItemType=" .. tostring(Window:GetSlot(Player, 2).m_ItemType) .. " Count=" .. tostring(Window:GetSlot(Player, 2).m_ItemCount))
-    SyncTradeWindowToInventory(Window, Player)
-    SyncInventoryToTradeWindow(Window, Player)
-    DEBUGLOG("Player " .. Player:GetName() .. " clicked slot " .. SlotNum .. " in trade window. Action: " .. click)
-    if blocked then
+        -- 按每个输入自身的需求量扣除（原实现会对两个槽重复扣减）
+        for j, b in ipairs(r.inputs or {}) do
+            if j <= 2 then
+                local slot = (j == 1) and 0 or 1
+                local cur = cItem(Window:GetSlotAfterDrag(Player, slot, SlotNum))
+                Window:SetSlot(Player, slot, cur:AddCount(-b.m_ItemCount * HowManyCanTrade))
+            end
+        end
+        local newOutputAsMuch = cItem(r.output)
+        Window:SetSlot(Player, 2, newOutputAsMuch:AddCount(r.output.m_ItemCount * (HowManyCanTrade - 1)))
+        local vData2 = VillagerManager.GetVillagerData(session.villagerID)
+        local vProf2 = vData2.profession
+        vData2.xp[vProf2 + 1] = (vData2.xp[vProf2 + 1] or 0) + HowManyCanTrade * GetXpForTradeEntry(r)
+        ReseedRandom(Player)
+        Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6) * HowManyCanTrade)
+        DEBUGLOG(" Completed " .. tostring(HowManyCanTrade) .. " trades")
+        if HandleShiftLeftClick(Window, Player, 2) then
+            return true
+        end
         return true
     end
+
+    -- 单次交易：从输入槽扣除物品，把结果留在输出槽由客户端取走
+    for j, b in ipairs(r.inputs or {}) do
+        if j == 1 then
+            local newInput1 = cItem(Window:GetSlotAfterDrag(Player, 0, SlotNum))
+            Window:SetSlot(Player, 0, newInput1:AddCount(-b.m_ItemCount))
+            local vData = VillagerManager.GetVillagerData(session.villagerID)
+            local vProf = vData.profession
+            vData.xp[vProf + 1] = (vData.xp[vProf + 1] or 0) + GetXpForTradeEntry(r)
+            ReseedRandom(Player)
+            Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6))
+        elseif j == 2 then
+            local newInput2 = cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum))
+            Window:SetSlot(Player, 1, newInput2:AddCount(-b.m_ItemCount))
+        end
+    end
+    return blocked
 end
 
 function OnCloseTradeWindow(Window, Player)
-    SelectedMatch = 0
-    CurrentVillagerID = nil
-    -- 处理交易窗口关闭事件的逻辑
-    DEBUGLOG("Player " .. Player:GetName() .. " closed the trade window.")
-    -- 在窗口关闭时同步物品栏
-    SyncTradeWindowToInventory(Window, Player)
-    World = Player:GetWorld()
-    -- 将未交易的物品掉落在玩家位置
-    World:SpawnItemPickup(Player:GetPosition(), Window:GetSlot(Player, 0),Vector3f(0,0,0))
-    World:SpawnItemPickup(Player:GetPosition(), Window:GetSlot(Player, 1),Vector3f(0,0,0))
+    local session = GetSession(Player)
+    -- 只有“当前会话的窗口”关闭时才清理状态：
+    -- 打开新窗口时旧窗口的 OnClosing 也会触发，不能把刚设置好的状态清掉
+    if session.window == Window then
+        session.selectedMatch = 0
+        session.villagerID = nil
+        session.window = nil
+    end
+    -- 把输入槽里没用掉的物品掉落在玩家脚下
+    local world = Player:GetWorld()
+    for _, slot in ipairs({0, 1}) do
+        local item = Window:GetSlot(Player, slot)
+        if item and item.m_ItemType ~= -1 then
+            world:SpawnItemPickup(Player:GetPosition(), item, Vector3f(0, 0, 0))
+        end
+    end
 end
 
 --- @param Player cPlayer
 --- @param Entity cMonster
 function TradeOnRightClickingVillager(Player, Entity)
-    -- 尝试打开交易窗口并列出可用测试交易（如果定义了）
-    VillagerTradeWindow = cLuaWindow(cWindow.wtNPCTrade,10,10,"Villager Trade")
-    VillagerTradeWindow:SetOnClicked(OnClickTradeWindow)
-    VillagerTradeWindow:SetOnClosing(OnCloseTradeWindow)
-    -- 加载插件目录下的 villager_trades.lua（如果存在）
-
-    if Entity:IsMob() then
-        DEBUGLOG("Right clicked mob type: " .. Entity:GetMobType())
-        if Entity:GetMobType() == mtVillager then
-            -- 阻止玩家给村民命名（手持命名牌右键村民时，返回 true 阻止默认命名处理）
-            local heldItem = Player:GetEquippedItem()
-            if heldItem.m_ItemType == 421 then  -- E_ITEM_NAME_TAG
-                Player:SendMessage("[VillagerTrade] 该村民已被插件管理，无法命名。")
-                return true
-            end
-
-            -- 确保村民有唯一标识符，并记录当前交易的村民
-            local villagerID = VillagerManager.EnsureVillagerID(Entity)
-            CurrentVillagerID = villagerID
-
-            -- 按玩家是否潜行决定行为：潜行则不打开 UI，仅发送交易信息
-            if Player:IsCrouched() then
-                local trades = GetVillagerTrades(villagerID)
-                DEBUGLOG("[VillagerTrade][DEBUG] 潜行查看村民 " .. villagerID .. " 交易，共 " .. tostring(#trades) .. " 条")
-                if trades and #trades > 0 then
-                    Player:SendMessage("[VillagerTrade] 可用交易：")
-                    for i, t in ipairs(trades) do
-                        local buyParts = {}
-                        if t.inputs then
-                            for _, b in ipairs(t.inputs) do
-                                table.insert(buyParts, (b.m_ItemCount or 1) .. "x " .. (ItemToString(b) or "?"))
-                            end
-                        end
-                        local sellParts = {}
-                        if t.output then
-                                table.insert(sellParts, (t.output.m_ItemCount or 1) .. "x " .. (ItemToString(t.output) or "?"))
-                        end
-                        Player:SendMessage(" - 交易 " .. i .. ": 给 " .. table.concat(buyParts, ", ") .. " -> 得到 " .. table.concat(sellParts, ", "))
-                    end
-                else
-                    Player:SendMessage("[VillagerTrade] 该村民暂无可用交易。")
-                end
-                return
-            end
-
-            -- 非潜行：打开交易窗口并用 GetSlot/SetSlot 填充格子(0,1 作为输入, 2 作为输出)
-            SelectedMatch = 0
-            Player:OpenWindow(VillagerTradeWindow)
-            SyncInventoryToTradeWindow(VillagerTradeWindow, Player)
-            Inventory = Player:GetInventory()
-            DEBUGLOG("Opened VillagerTrade window for player " .. Player:GetName())
-        end
+    if not Entity:IsMob() or Entity:GetMobType() ~= mtVillager then
+        return false
     end
+
+    -- 阻止玩家给村民命名（手持命名牌右键村民时返回 true，跳过默认命名处理）
+    if Player:GetEquippedItem().m_ItemType == E_ITEM_NAME_TAG then
+        Player:SendMessage("[VillagerTrade] 该村民已被插件管理，无法命名。")
+        return true
+    end
+
+    local villagerID = VillagerManager.EnsureVillagerID(Entity)
+    local session = GetSession(Player)
+
+    -- 潜行：不打开界面，只在聊天栏列出可用交易
+    if Player:IsCrouched() then
+        local trades = GetVillagerTrades(villagerID)
+        DEBUGLOG("[DEBUG] 潜行查看村民 " .. villagerID .. " 交易，共 " .. tostring(#trades) .. " 条")
+        if trades and #trades > 0 then
+            Player:SendMessage("[VillagerTrade] 可用交易：")
+            for i, t in ipairs(trades) do
+                local buyParts = {}
+                if t.inputs then
+                    for _, b in ipairs(t.inputs) do
+                        table.insert(buyParts, (b.m_ItemCount or 1) .. "x " .. (ItemToString(b) or "?"))
+                    end
+                end
+                local sellParts = {}
+                if t.output then
+                    table.insert(sellParts, (t.output.m_ItemCount or 1) .. "x " .. (ItemToString(t.output) or "?"))
+                end
+                Player:SendMessage(" - 交易 " .. i .. ": 给 " .. table.concat(buyParts, ", ") .. " -> 得到 " .. table.concat(sellParts, ", "))
+            end
+        else
+            Player:SendMessage("[VillagerTrade] 该村民暂无可用交易。")
+        end
+        return
+    end
+
+    -- 打开交易窗口：尺寸必须与客户端村民交易窗口一致（3 槽 + 玩家背包 36 槽 = 39 槽）。
+    -- Cuberite 文档明确警告：窗口尺寸与客户端预期不符时可能让客户端崩溃。
+    session.selectedMatch = 0
+    session.villagerID = villagerID
+    session.window = cLuaWindow(cWindow.wtNPCTrade, 3, 1, "Villager Trade")
+    session.window:SetOnClicked(OnClickTradeWindow)
+    session.window:SetOnClosing(OnCloseTradeWindow)
+    Player:OpenWindow(session.window)
+    DEBUGLOG("Opened VillagerTrade window for player " .. Player:GetName() .. " (villager " .. villagerID .. ")")
 end

@@ -100,7 +100,7 @@ function villager_manager.EnsureVillagerID(villager)
     local id = villager_manager.GenerateID(profession)
     villager:SetCustomName(id)
     villager:SetCustomNameAlwaysVisible(false)  -- 不常显，减少视觉干扰
-    DEBUGLOG("[VillagerTrade] 为村民分配标识符: " .. id)
+    DEBUGLOG("为村民分配标识符: " .. id)
     return id
 end
 
@@ -142,33 +142,45 @@ function villager_manager.LoadVillagerData()
     local path = PLUGIN:GetLocalFolder() .. "/villager_data.txt"
     local file = io.open(path, "r")
     if not file then
-        LOG("[VillagerTrade] 未找到 villager_data.txt，使用空数据。")
+        LOG("未找到 villager_data.txt，使用空数据。")
         return
     end
+    local loaded, skipped = 0, 0
     for line in file:lines() do
         if not line:match("^%s*#") then
             line = line:gsub("%s*#.*$", "")
             line = line:gsub("%s+$", "")
             if line ~= "" then
                 -- 格式: <villagerID> = <profession> | <xp1> | ... | <xp6> | <lastRefreshAge>
+                -- 字段数必须与 SaveVillagerData 写出的完全一致：
+                -- 1 个职业 + 6 个经验 + 1 个年龄 = 8 个数字（多一个捕获会导致永远匹配失败，数据随后被覆盖丢失）
                 local id, prof, x1, x2, x3, x4, x5, x6, age =
-                    line:match("^(%S+)%s*=%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%-?%d+)$")
+                    line:match("^(%S+)%s*=%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%-?%d+)$")
                 if id then
+                    local lastAge = tonumber(age)
+                    if lastAge == -1 then
+                        lastAge = nil  -- -1 是 SaveVillagerData 对 nil 写的占位值
+                    end
                     villager_manager.Villagers[id] = {
                         profession = tonumber(prof),
                         xp = {
                             tonumber(x1), tonumber(x2), tonumber(x3),
                             tonumber(x4), tonumber(x5), tonumber(x6),
                         },
-                        lastRefreshAge = tonumber(age),
+                        lastRefreshAge = lastAge,
                     }
                     villager_manager.AssignedIDs[id] = true
+                    loaded = loaded + 1
+                else
+                    skipped = skipped + 1
+                    LOGWARNING("跳过无法解析的数据行: " .. line)
                 end
             end
         end
     end
     file:close()
-    LOG("[VillagerTrade] 已加载 " .. tostring(villager_manager.CountVillagers()) .. " 个村民的数据。")
+    LOG("已加载 " .. tostring(loaded) .. " 个村民的数据（表内共 "
+        .. tostring(villager_manager.CountVillagers()) .. " 个）。")
 end
 
 -- 保存村民数据文件 villager_data.txt
@@ -176,7 +188,7 @@ function villager_manager.SaveVillagerData()
     local path = PLUGIN:GetLocalFolder() .. "/villager_data.txt"
     local file = io.open(path, "w")
     if not file then
-        LOG("[VillagerTrade] 无法写入 " .. path)
+        LOG("无法写入 " .. path)
         return
     end
     for id, data in pairs(villager_manager.Villagers) do
@@ -188,7 +200,21 @@ function villager_manager.SaveVillagerData()
         file:write(line .. "\n")
     end
     file:close()
-    LOG("[VillagerTrade] 已保存 " .. tostring(villager_manager.CountVillagers()) .. " 个村民的数据。")
+    villager_manager.LastSaveTime = os.time()
+    LOG("已保存 " .. tostring(villager_manager.CountVillagers()) .. " 个村民的数据。")
+end
+
+-- 定期保存（默认 5 分钟）：由交易刷新任务周期性调用，避免服务器崩溃时丢失全部 XP
+villager_manager.LastSaveTime = 0
+local AUTOSAVE_INTERVAL_SECONDS = 300
+
+function villager_manager.SaveVillagerDataIfDue(IntervalSeconds)
+    local interval = IntervalSeconds or AUTOSAVE_INTERVAL_SECONDS
+    if os.time() - (villager_manager.LastSaveTime or 0) < interval then
+        return false
+    end
+    villager_manager.SaveVillagerData()
+    return true
 end
 
 -- 统计村民数量
@@ -218,11 +244,11 @@ end
 --   将 v1 中每个玩家每个职业的经验，分配给第一个新分配的具有该职业的村民（分配后清 0）。
 --   player_trades.txt 未记录交易所属职业，不做迁移。
 -- 参数：
---   World: 用于遍历村民的世界
+--   VillagerList: 所有世界中已加载的村民实体列表（迁移只做一次，避免多世界重复分配）
 --   v1XpTable: v1 的经验表（可为 nil）
-function villager_manager.MigrateV1ToV2(World, v1XpTable)
+function villager_manager.MigrateV1ToV2(VillagerList, v1XpTable)
     if not v1XpTable then
-        LOG("[VillagerTrade] 无 v1 经验数据，跳过迁移。")
+        LOG("无 v1 经验数据，跳过迁移。")
         return
     end
 
@@ -240,30 +266,27 @@ function villager_manager.MigrateV1ToV2(World, v1XpTable)
     end
 
     if not hasAnyXp then
-        LOG("[VillagerTrade] v1 经验数据全为 0，无需迁移。")
+        LOG("v1 经验数据全为 0，无需迁移。")
         return
     end
 
-    -- 遍历世界村民，为每个职业找到"第一个新分配的村民"，把该职业的总经验分配给它
+    -- 遍历村民，为每个职业找到"第一个新分配的村民"，把该职业的总经验分配给它
     local migratedCount = 0
     local assignedForProfession = {}  -- 记录每个职业是否已分配过
-    World:ForEachEntity(function(Entity)
-        if Entity:IsMob() and Entity:GetMobType() == mtVillager then
-            local id = villager_manager.EnsureVillagerID(Entity)
-            local data = villager_manager.GetVillagerData(id)
-            local prof = data.profession
-            if not assignedForProfession[prof] then
-                assignedForProfession[prof] = true
-                -- 把该职业的 v1 总经验分配给这个村民
-                data.xp[prof + 1] = (data.xp[prof + 1] or 0) + professionTotalXp[prof + 1]
-                LOG("[VillagerTrade] 迁移: 职业 " .. prof .. " 的 " .. professionTotalXp[prof + 1] .. " XP 分配给村民 " .. id)
-                migratedCount = migratedCount + 1
-            end
+    for _, Entity in ipairs(VillagerList or {}) do
+        local id = villager_manager.EnsureVillagerID(Entity)
+        local data = villager_manager.GetVillagerData(id)
+        local prof = data.profession
+        if not assignedForProfession[prof] then
+            assignedForProfession[prof] = true
+            -- 把该职业的 v1 总经验分配给这个村民
+            data.xp[prof + 1] = (data.xp[prof + 1] or 0) + professionTotalXp[prof + 1]
+            LOG("迁移: 职业 " .. prof .. " 的 " .. professionTotalXp[prof + 1] .. " XP 分配给村民 " .. id)
+            migratedCount = migratedCount + 1
         end
-        return false
-    end)
+    end
 
-    LOG("[VillagerTrade] v1->v2 迁移完成，共迁移 " .. tostring(migratedCount) .. " 个职业的经验。")
+    LOG("v1->v2 迁移完成，共迁移 " .. tostring(migratedCount) .. " 个职业的经验。")
 end
 
 return villager_manager
