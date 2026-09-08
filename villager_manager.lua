@@ -46,14 +46,68 @@ villager_manager.AssignedIDs = {}
 -- 随机字符集（用于生成标识符后缀）
 local CHARSET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
--- 初始化随机种子（模块加载时）
-math.randomseed(os.time())
+-- ============================================================================
+-- 私有伪随机数生成器
+-- ============================================================================
+-- 为什么不用 math.random：
+--   * Cuberite 内嵌 Lua 5.1，math.random 用的是**进程级全局**的 C rand()，
+--     任何插件调用 math.randomseed 都会影响其它插件（本机 MCPServer、
+--     NetworkTest、VanillaFeatureComplement 都有 math.randomseed 调用）。
+--   * math.randomseed 的参数在 Lua 5.1 里会被截断成 32 位整数，而
+--     os.time() 加上 ID 后缀的 36 进制值经常超过 2^31（未定义行为）。
+--   * 某些种子会让 glibc 的 rand() 进入极短周期：例如种子 2147483647 时，
+--     职业只在 2 与 5 之间跳、字符只出现 '9' 和 'r'（实测复现）。
+-- 这里自带一个 32 位 LCG：乘积 < 2^53，double 下精确；只取高位，质量足够，
+-- 且完全不受其它插件影响、同一 (村民, 世界年龄) 可复现。
+local Random = {}
+villager_manager.Random = Random
+
+Random.state = 12345
+
+-- 把任意数值映射到 [1, 2^31-1]
+function Random.Seed(seed)
+    local s = math.floor(math.abs(tonumber(seed) or 0)) % 2147483647
+    if s == 0 then s = 12345 end
+    Random.state = s
+end
+
+local function Next32()
+    Random.state = (1664525 * Random.state + 1013904223) % 4294967296
+    return Random.state
+end
+
+-- [0, 1)
+function Random.Float()
+    return math.floor(Next32() / 4096) / 1048576
+end
+
+-- [min, max] 闭区间整数
+function Random.Int(min, max)
+    min = math.floor(tonumber(min) or 0)
+    max = math.floor(tonumber(max) or 0)
+    if max < min then min, max = max, min end
+    local span = max - min + 1
+    if span <= 1 then return min end
+    return min + (math.floor(Next32() / 65536) % span)
+end
+
+-- 字符串哈希（用于按村民 ID 播种）
+function villager_manager.HashString(s)
+    local h = 0
+    for i = 1, #s do
+        h = (h * 31 + s:byte(i)) % 2147483647
+    end
+    return h
+end
+
+-- 模块加载时的初始种子（时间 + CPU 时间，避免同秒内多个状态完全相同）
+Random.Seed(os.time() * 1000 + math.floor(os.clock() * 1000))
 
 -- 生成随机后缀（6 位）
 function villager_manager.GenerateRandomSuffix()
     local suffix = ""
     for _ = 1, 6 do
-        local idx = math.random(1, #CHARSET)
+        local idx = Random.Int(1, #CHARSET)
         suffix = suffix .. CHARSET:sub(idx, idx)
     end
     return suffix
@@ -96,7 +150,7 @@ function villager_manager.EnsureVillagerID(villager)
     end
 
     -- 没有标识符，分配一个（随机职业）
-    local profession = math.random(0, 5)
+    local profession = Random.Int(0, 5)
     local id = villager_manager.GenerateID(profession)
     villager:SetCustomName(id)
     villager:SetCustomNameAlwaysVisible(false)  -- 不常显，减少视觉干扰

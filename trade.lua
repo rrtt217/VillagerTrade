@@ -29,16 +29,6 @@ local function GetSession(Player)
     return session
 end
 
--- 用玩家 UUID 前 8 位作随机种子；UUID 为空（离线 / 无 Mojang 账号）时退回 os.time()
-local function ReseedRandom(Player)
-    local seedPart = 0
-    local uuid = Player:GetUUID()
-    if uuid and uuid ~= "" then
-        seedPart = tonumber(string.sub(uuid, 1, 8), 16) or 0
-    end
-    math.randomseed(os.time() + seedPart)
-end
-
 -- 根据交易条目反查 trades.txt 中定义的 tradeXp
 function GetXpForTradeEntry(Entry)
     for i, entryTrades in ipairs(Trades or {}) do
@@ -321,8 +311,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
         local vData2 = VillagerManager.GetVillagerData(session.villagerID)
         local vProf2 = vData2.profession
         vData2.xp[vProf2 + 1] = (vData2.xp[vProf2 + 1] or 0) + howMany * GetXpForTradeEntry(r)
-        ReseedRandom(Player)
-        Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6) * howMany)
+        Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), VillagerManager.Random.Int(3, 6) * howMany)
         DEBUGLOG(" Completed " .. tostring(howMany) .. " trades")
         return true
     end
@@ -335,8 +324,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
             local vData = VillagerManager.GetVillagerData(session.villagerID)
             local vProf = vData.profession
             vData.xp[vProf + 1] = (vData.xp[vProf + 1] or 0) + GetXpForTradeEntry(r)
-            ReseedRandom(Player)
-            Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), math.random(3, 6))
+            Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), VillagerManager.Random.Int(3, 6))
         elseif j == 2 then
             local newInput2 = cItem(Window:GetSlotAfterDrag(Player, 1, SlotNum))
             SetSlotCount(Window, Player, 1, newInput2, newInput2.m_ItemCount - b.m_ItemCount)

@@ -29,7 +29,7 @@ local function BuildTradeItem(itemSpec, min, max)
     else
         item = cItem(tonumber(itemSpec.type))
     end
-    local itemCount = math.random(min, max)
+    local itemCount = VillagerManager.Random.Int(min, max)
     if itemCount <= 0 then itemCount = 1 end
     if itemCount > item:GetMaxStackSize() then
         itemCount = item:GetMaxStackSize()
@@ -41,15 +41,20 @@ local function BuildTradeItem(itemSpec, min, max)
     elseif itemSpec.enchantments and itemSpec.enchantments:match("ByXpLevels") then
         -- 兼容 "ByXpLevels(5,19)" 与 "ByXpLevels-(5,45)" 两种写法（原模式漏了可选的 '-'）
         local enchantLevelMin, enchantLevelMax = itemSpec.enchantments:match("ByXpLevels%-?%((%d+),%s*(%d+)%)")
-        local enchantLevel = math.random(tonumber(enchantLevelMin) or 0, tonumber(enchantLevelMax) or 0)
+        local enchantLevel = VillagerManager.Random.Int(tonumber(enchantLevelMin) or 0, tonumber(enchantLevelMax) or 0)
         item:EnchantByXPLevels(enchantLevel)
     end
     return item
 end
 
 -- 为指定村民生成交易列表（基于其职业和经验等级）
+-- seedSalt：同一村民在不同刷新轮次得到不同列表；相同 (villagerID, seedSalt) 结果可复现
 -- 返回 { {inputs = {...}, output = item}, ... }
-function GenerateTradesForVillager(villagerID)
+function GenerateTradesForVillager(villagerID, seedSalt)
+    if VillagerManager and VillagerManager.Random then
+        VillagerManager.Random.Seed(VillagerManager.HashString(tostring(villagerID))
+            + (tonumber(seedSalt) or os.time()))
+    end
     local data = VillagerManager.GetVillagerData(villagerID)
     local profession = data.profession
     local level = GetXpLevel(data.xp[profession + 1] or 0)
@@ -69,7 +74,7 @@ function GenerateTradesForVillager(villagerID)
                 matchedProfession = matchedProfession + 1
                 if trade.unlockLevel and level >= trade.unlockLevel then
                     matchedLevel = matchedLevel + 1
-                    if trade.weight and math.random() < trade.weight then
+                    if trade.weight and VillagerManager.Random.Float() < trade.weight then
                         matchedWeight = matchedWeight + 1
                         local formattedTrade = {}
                         formattedTrade.inputs = {}
@@ -108,11 +113,9 @@ function RefreshVillagerTradesForVillager(villager, World)
     end
 
     if shouldRefresh then
-        -- 用村民 ID 后缀（36 进制）作为随机种子的一部分
-        local suffix = tostring(id):match("%-(%w+)$")
-        local seedPart = (suffix and tonumber(suffix, 36)) or 0
-        math.randomseed(os.time() + seedPart)
-        VillagerTrades[id] = GenerateTradesForVillager(id)
+        -- 以 (村民 ID, 世界年龄) 播种：同一村民同一刷新轮次结果可复现，
+        -- 不同轮次不同；不再触碰进程级全局的 math.random
+        VillagerTrades[id] = GenerateTradesForVillager(id, worldAge)
         data.lastRefreshAge = worldAge
         DEBUGLOG("刷新村民 " .. id .. " 的交易（worldAge=" .. tostring(worldAge) .. "），共 " .. tostring(#VillagerTrades[id]) .. " 条")
     else
@@ -145,7 +148,7 @@ function GetVillagerTrades(villagerID)
     end
     if not VillagerTrades[villagerID] then
         DEBUGLOG("[DEBUG] GetVillagerTrades: 村民 " .. villagerID .. " 无缓存交易，重新生成")
-        VillagerTrades[villagerID] = GenerateTradesForVillager(villagerID)
+        VillagerTrades[villagerID] = GenerateTradesForVillager(villagerID, os.time())
     end
     DEBUGLOG("[DEBUG] GetVillagerTrades: 村民 " .. villagerID .. " 返回 " .. tostring(#VillagerTrades[villagerID]) .. " 条交易")
     return VillagerTrades[villagerID]

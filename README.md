@@ -103,3 +103,5 @@ Written when a player leaves, every 5 minutes, and when the plugin unloads or th
 - Villager professions are virtual — the Lua API cannot read the real villager profession.
 - Trade lists live in memory and are regenerated on demand; only the refresh age is persisted.
 - `player_trades.txt` / `player_trade_experience.txt` are v1 files kept only for migration.
+- Randomness: the plugin uses its own 32-bit LCG instead of `math.random`, so it neither depends on
+  nor disturbs the process-global RNG that the engine and other plugins share.

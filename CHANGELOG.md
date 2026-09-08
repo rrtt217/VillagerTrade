@@ -2,6 +2,23 @@
 
 **English** · [中文](CHANGELOG.zh-CN.md) · [README](README.md)
 
+## v2.2 — 2026-09-08
+
+### Fixed
+
+- **Villager IDs could collapse to two professions and two characters** — reported as "villagers are
+  only priest or generic, and the suffixes only contain 9 and r". Root cause: the plugin used the
+  process-global `math.random` (Lua 5.1 → C `rand()`) and reseeded it with
+  `os.time() + <36-base value of the ID suffix>`. That sum frequently exceeds 2^31 (Lua 5.1
+  truncates the seed to a 32-bit int), and some seeds drive glibc's `rand()` into a very short
+  period. Seed `2147483647` reproduces the symptom exactly (professions {2,5}, characters {'9','r'}).
+  The plugin now uses its own 32-bit LCG (double-safe arithmetic, high bits only):
+  - immune to other plugins reseeding the shared global RNG (MCPServer, NetworkTest and
+    VanillaFeatureComplement all call `math.randomseed`),
+  - it no longer perturbs their randomness either,
+  - trade lists are reproducible per (villager, world age), and IDs always come from a
+    well-distributed generator.
+
 ## v2.1 — 2026-09-08
 
 Fixes found by a full test pass (static checks, server runtime probes, real client clicks).

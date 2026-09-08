@@ -93,3 +93,5 @@ EnableVillagerSpawnEggCrafting=1
 - 村民职业是虚拟的——Lua API 无法读取真实职业。
 - 交易列表保存在内存中、按需重新生成，只有刷新年龄会被持久化。
 - `player_trades.txt` / `player_trade_experience.txt` 是 v1 文件，仅为迁移保留。
+- 随机数：插件使用自带的 32 位 LCG，不使用 `math.random`——既不依赖、也不扰动引擎与其它插件
+  共用的进程级全局随机数。
