@@ -238,12 +238,17 @@ function villager_manager.LoadVillagerData()
 end
 
 -- 保存村民数据文件 villager_data.txt
+-- 崩溃安全：先写 villager_data.txt.tmp，成功后再原子 rename 覆盖正式文件。
+-- 这样即使进程在写入中途被杀死（SIGABRT/SIGKILL/掉电），磁盘上的正式文件
+-- 要么是"上一次的完整内容"，要么是"本次的完整内容"，绝不会被截断成半截文件。
+-- （此前直接 io.open(path, "w") 会先截断正式文件，写一半崩溃就丢掉全部村民数据。）
 function villager_manager.SaveVillagerData()
     local path = PLUGIN:GetLocalFolder() .. "/villager_data.txt"
-    local file = io.open(path, "w")
+    local tmpPath = path .. ".tmp"
+    local file = io.open(tmpPath, "w")
     if not file then
-        LOG("无法写入 " .. path)
-        return
+        LOG("无法写入 " .. tmpPath)
+        return false
     end
     for id, data in pairs(villager_manager.Villagers) do
         local line = id .. " = " .. tostring(data.profession)
@@ -253,14 +258,27 @@ function villager_manager.SaveVillagerData()
         line = line .. " | " .. tostring(data.lastRefreshAge or -1)
         file:write(line .. "\n")
     end
-    file:close()
+    local closeOk, closeErr = file:close()
+    if closeOk == nil then
+        LOG("写入 " .. tmpPath .. " 失败: " .. tostring(closeErr))
+        os.remove(tmpPath)
+        return false
+    end
+    local renamed, renameErr = os.rename(tmpPath, path)
+    if not renamed then
+        LOG("重命名 " .. tmpPath .. " -> " .. path .. " 失败: " .. tostring(renameErr))
+        os.remove(tmpPath)
+        return false
+    end
     villager_manager.LastSaveTime = os.time()
     LOG("已保存 " .. tostring(villager_manager.CountVillagers()) .. " 个村民的数据。")
+    return true
 end
 
--- 定期保存（默认 5 分钟）：由交易刷新任务周期性调用，避免服务器崩溃时丢失全部 XP
+-- 定期保存：由交易刷新任务（每 20 秒）周期性调用。
+-- 文件很小（几十行），把间隔从 5 分钟缩短到 60 秒，崩溃时最多只丢 1 分钟的 XP。
 villager_manager.LastSaveTime = 0
-local AUTOSAVE_INTERVAL_SECONDS = 300
+local AUTOSAVE_INTERVAL_SECONDS = 60
 
 function villager_manager.SaveVillagerDataIfDue(IntervalSeconds)
     local interval = IntervalSeconds or AUTOSAVE_INTERVAL_SECONDS

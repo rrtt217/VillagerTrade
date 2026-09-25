@@ -2,6 +2,38 @@
 
 **English** · [中文](CHANGELOG.zh-CN.md) · [README](README.md)
 
+## v2.4 — 2026-09-25
+
+### Changed
+
+- **Crash-safe persistence** — `villager_data.txt` is now written to `villager_data.txt.tmp` first
+  and then atomically renamed over the real file with `os.rename`. If the server crashes / is
+  SIGKILLed / loses power mid-write, the file on disk is either the previous complete content or
+  the new complete content — **never truncated**. Previously `io.open(path, "w")` truncated the
+  real file first, so a crash halfway through writing lost every villager record. Verified: the
+  inode changes across a save (a real rename, not an in-place overwrite), a stray `.tmp` is
+  replaced and removed by the next save, and a failed write/rename keeps the original file and
+  logs the error.
+- **Autosave interval 5 min → 60 s**, plus a save attempt after every completed trade (internally
+  throttled to once per 60 s). A crash now costs at most ~1 minute of villager XP / last-refresh
+  age instead of 5 minutes.
+- Note: a villager's identity lives in entity NBT (`CustomName`), i.e. **world data**; when that
+  hits disk is decided by Cuberite's chunk/world autosave and cannot be forced from Lua. This
+  plugin only guarantees its own `villager_data.txt`.
+
+## v2.3 — 2026-09-25
+
+### Added
+
+- **Client-localized item names in chat** — the sneak-peek trade list and the output-slot cycling
+  message no longer print `ItemToString` internal names (`cookedfished` / `whitewool` /
+  `fishingrod`). They are sent as `{"translate": …}` text components via `SendMessageRaw`, so
+  each client renders them from its own language file (a Chinese client shows 绿宝石 / 白色羊毛 /
+  熟鳕鱼, an English one shows Emerald / White Wool / Cooked Fish). Translation keys are picked per
+  client protocol version: legacy camel-case keys (`item.emerald.name`) for 1.8–1.12.2, flattened
+  keys (`item.minecraft.emerald`) for 1.13+; unknown items fall back to `ItemToString`. The
+  mapping lives in the new `item_l10n.lua` and covers every item used by `trades.txt`.
+
 ## v2.2 — 2026-09-08
 
 ### Fixed

@@ -62,6 +62,15 @@ function Initialize(Plugin)
     end
     _G.VillagerManager = villager_manager
 
+    -- 加载物品名本地化模块（聊天栏显示客户端可翻译的物品名）
+    local item_l10n = require("item_l10n")
+    if not item_l10n or type(item_l10n) ~= "table" then
+        LOG("Error: could not load item_l10n.lua")
+        return
+    end
+    _G.ItemL10N = item_l10n
+    LOG("已加载 " .. tostring(item_l10n.CountKeys()) .. " 条物品翻译映射")
+
     -- 加载村民数据（v2 格式）
     villager_manager.LoadVillagerData()
 

@@ -61,8 +61,12 @@ Several entries in `trades.txt` can match the same inputs (for example `1 emeral
 While more than one entry matches, the plugin reports the selection in chat:
 
 ```
-[VillagerTrade] 交易 2/4：2x emerald -> 1x whitewool
+[VillagerTrade] 交易 2/4：2x Emerald -> 1x White Wool
 ```
+
+Item names are rendered by the **client in the player's own language** (the plugin sends
+`translate` text components instead of internal English names): a Chinese client shows
+绿宝石 / 白色羊毛, an English one shows Emerald / White Wool. See `item_l10n.lua`.
 
 The selection resets to the first match whenever the set of matching trades changes (for example
 after you add or remove an input), so you always start from a predictable state. If two entries

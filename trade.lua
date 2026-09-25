@@ -160,14 +160,31 @@ local function PlaceOutput(Window, Player, baseItem, total)
     return left
 end
 
--- 交易描述（用于切换提示）
-local function DescribeTrade(t)
-    local parts = {}
-    for _, b in ipairs(t.inputs or {}) do
-        table.insert(parts, tostring(b.m_ItemCount) .. "x " .. (ItemToString(b) or "?"))
+-- 交易描述的聊天片段（物品名交给客户端翻译，见 item_l10n.lua）
+-- Prefix 为行首文本，InSep 分隔多个输入，OutSep 为输入与输出之间的连接词
+local function TradeLineParts(Prefix, t, InSep, OutSep)
+    InSep = InSep or ", "
+    OutSep = OutSep or " -> "
+    local parts = { Prefix }
+    for j, b in ipairs(t.inputs or {}) do
+        if j > 1 then
+            parts[#parts + 1] = InSep
+        end
+        parts[#parts + 1] = tostring(b.m_ItemCount) .. "x "
+        parts[#parts + 1] = { item = b }
     end
-    return table.concat(parts, " + ") .. " -> "
-        .. tostring(t.output.m_ItemCount) .. "x " .. (ItemToString(t.output) or "?")
+    parts[#parts + 1] = OutSep
+    parts[#parts + 1] = tostring(t.output.m_ItemCount) .. "x "
+    parts[#parts + 1] = { item = t.output }
+    return parts
+end
+
+-- 交易会改变村民 XP。崩溃（SIGABRT/SIGKILL/掉电）时内存状态会丢，
+-- 因此每次交易后尝试落盘；内部按 60 秒节流，避免连续刷交易时频繁写盘。
+local function SaveVillagerDataSoon()
+    if VillagerManager and VillagerManager.SaveVillagerDataIfDue then
+        VillagerManager.SaveVillagerDataIfDue(60)
+    end
 end
 
 function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
@@ -266,8 +283,8 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
 
     if cycleOnly then
         if matchedTradesCount > 1 then
-            Player:SendMessage("[VillagerTrade] 交易 " .. selectedIndex .. "/" .. matchedTradesCount
-                .. "：" .. DescribeTrade(r))
+            ItemL10N.Send(Player, TradeLineParts("[VillagerTrade] 交易 " .. selectedIndex .. "/"
+                .. matchedTradesCount .. "：", r, " + ", " -> "))
         end
         return true
     end
@@ -312,6 +329,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
         local vProf2 = vData2.profession
         vData2.xp[vProf2 + 1] = (vData2.xp[vProf2 + 1] or 0) + howMany * GetXpForTradeEntry(r)
         Player:GetWorld():SpawnExperienceOrb(Player:GetPosition(), VillagerManager.Random.Int(3, 6) * howMany)
+        SaveVillagerDataSoon()
         DEBUGLOG(" Completed " .. tostring(howMany) .. " trades")
         return true
     end
@@ -330,6 +348,7 @@ function OnClickTradeWindow(Window, Player, SlotNum, ClickAction, ClickedItem)
             SetSlotCount(Window, Player, 1, newInput2, newInput2.m_ItemCount - b.m_ItemCount)
         end
     end
+    SaveVillagerDataSoon()
     return false
 end
 
@@ -380,17 +399,7 @@ function TradeOnRightClickingVillager(Player, Entity)
         if trades and #trades > 0 then
             Player:SendMessage("[VillagerTrade] 可用交易：")
             for i, t in ipairs(trades) do
-                local buyParts = {}
-                if t.inputs then
-                    for _, b in ipairs(t.inputs) do
-                        table.insert(buyParts, (b.m_ItemCount or 1) .. "x " .. (ItemToString(b) or "?"))
-                    end
-                end
-                local sellParts = {}
-                if t.output then
-                    table.insert(sellParts, (t.output.m_ItemCount or 1) .. "x " .. (ItemToString(t.output) or "?"))
-                end
-                Player:SendMessage(" - 交易 " .. i .. ": 给 " .. table.concat(buyParts, ", ") .. " -> 得到 " .. table.concat(sellParts, ", "))
+                ItemL10N.Send(Player, TradeLineParts(" - 交易 " .. i .. ": 给 ", t, ", ", " -> 得到 "))
             end
         else
             Player:SendMessage("[VillagerTrade] 该村民暂无可用交易。")
