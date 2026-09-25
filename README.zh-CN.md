@@ -18,6 +18,8 @@
 - **阻止命名**：命名牌无法给插件管理的村民改名。
 - **村民刷怪蛋**：用 1 绿宝石 + 1 鸡蛋合成，或从 `vtGeneric` 村民处购买（合成配方有开关，
   见 `settings.ini`）。
+- **可选的村庄生态**（默认关闭）：新村庄自动生成村民，以及村庄铁傀儡守卫——见下方
+  "可选的村庄生态"。
 
 ## 安装
 
@@ -28,11 +30,34 @@
 
 ```ini
 [Features]
-EnableVillagerSpawnEggCrafting=1
+EnableVillagerSpawnEggCrafting=1   ; 1 绿宝石 + 1 鸡蛋 = 1 村民刷怪蛋
+
+[VillageLife]                     ; 村庄生态（默认关闭）
+EnableVillageSpawning=0           ; 新村庄自动生成村民
+MaxVillagersPerChunk=2
+ChunksPerTick=2
+SaveIntervalSeconds=30
+
+[IronGolem]                       ; 村庄铁傀儡守卫（默认关闭）
+EnableGuard=0                     ; 守卫行为
+EnableVillageGolemSpawning=0      ; 在村庄里生成守卫
+MaxGolemsPerVillage=2
+VillageGolemRadius=48
 ```
 
 - 键名**两侧不要写空格**：Cuberite 会把空格算进键名，导致读取失败并静默使用默认值。
 - 修改后需重载插件（`/reload` 或控制台 `reload`）。
+- 其余键（扫描深度、注入冷却、追击距离等）见 `settings.ini` 内的注释。
+
+### 可选的村庄生态（两组开关默认都是 0）
+
+- `[VillageLife] EnableVillageSpawning`：区块首次加载时，若从未被扫描过且落在候选生物群系，
+  就以"木门"为特征生成村民；已扫描标记持久化在 `village_scanned.txt`（删掉该文件可让所有
+  区块重新参与一次扫描）。
+- `[IronGolem] EnableVillageGolemSpawning` + `EnableGuard`：在含门的村庄区块生成 1~2 只
+  铁傀儡守卫，并让它们用**引擎自带的战斗 AI** 攻击附近的敌对怪。插件只做两件薄事：注入目标
+  （让中性怪挨一次"模拟伤害"，随后立刻 Heal 回去）和下发追击路径。
+- 控制台：`villagelife`（状态）、`villagelife flush`、`villagelife scan <cx> <cz>`、`golemguard`。
 
 ## 交易界面操作
 

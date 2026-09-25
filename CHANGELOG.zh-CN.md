@@ -2,6 +2,37 @@
 
 [English](CHANGELOG.md) · **中文** · [说明文档](README.zh-CN.md)
 
+## v2.5 — 2026-09-25
+
+### 新增（两个特性默认都是关闭的，见 `settings.ini`）
+
+- **新村庄自动生成村民**（`[VillageLife] EnableVillageSpawning`）
+  - 区块首次可用（生成或从磁盘加载）时，只有**没被扫描过**且落在候选生物群系里的区块才入队；
+    扫描开销按 `ChunksPerTick` 摊到多个 tick，避免区块加载风暴里一次性扫描拖垮 tick 线程。
+  - 扫完立即在内存标记并**追加持久化**到 `village_scanned.txt`，重启/重载后读回，同一区块
+    不会再被扫第二遍；目标区块 24 格内已有村民时跳过生成（标记丢失也不会重复刷）。
+  - 以"木门"作为村庄特征（玩家自建的木门房会被误判）。
+  - 控制台：`villagelife` / `villagelife flush` / `villagelife scan <cx> <cz>`。
+
+- **村庄铁傀儡守卫**（`[IronGolem] EnableGuard`、`EnableVillageGolemSpawning`）
+  - 生成：扫描到含门的村庄区块、且半径内铁傀儡数不足 `MaxGolemsPerVillage` 时生成 1 只守卫
+    （简化版 1.12；严格还原需要先做村庄聚合：门 > 20、傀儡 < 村民数/10、每 tick 1/7000）。
+  - 守卫：Cuberite 的 `cIronGolem` 属于 `cAggressiveMonster`，战斗 AI 齐全，但作为中性怪
+    只有**挨打**时才会锁定目标。插件用一次 `TakeDamage` 伪造攻击完成目标注入，再按需
+    `MoveToPosition` 追击；追击 / 攻击 / 冷却 / 击退 / 难度伤害全部由引擎负责。
+  - **模拟伤害最小化**：Core 会按攻击者类覆盖 `FinalDamage`（僵尸 2/3/4），因此注入后立刻
+    把损失的血量 `Heal` 回去（净损失 0），并用"同目标冷却 + 每傀儡全局最小注入间隔"节流。
+  - 控制台：`golemguard`。
+
+### 变更
+
+- 移除 v2 原型中的村民繁殖机制（交易回填、`Willing` / `BabyBornAge` 等状态）。
+
+### 备注
+
+- 两个开关默认均为 0；启用后，**已有的村庄**会在其区块首次加载（且尚未标记）时补上村民/守卫。
+- 删除 `village_scanned.txt` 可让所有区块重新参与一次扫描。
+
 ## v2.4 — 2026-09-25
 
 ### 变更

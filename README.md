@@ -21,6 +21,8 @@ profession, a persistent identifier and a trade list that is refreshed over time
 - **Name-tag protection**: name tags cannot rename a plugin-managed villager.
 - **Villager spawn eggs**: craft 1 emerald + 1 egg, or buy one from a `vtGeneric` villager
   (the crafting recipe has a switch in `settings.ini`).
+- **Optional village ecology** (off by default): villagers in newly generated villages, plus village
+  iron golem guards — see "Optional village ecology" below.
 
 ## Install
 
@@ -32,8 +34,30 @@ matches the vanilla villager window.
 
 ```ini
 [Features]
-EnableVillagerSpawnEggCrafting=1
+EnableVillagerSpawnEggCrafting=1   ; 1 emerald + 1 egg = 1 villager spawn egg
+
+[VillageLife]                     ; village ecology (off by default)
+EnableVillageSpawning=0           ; spawn villagers in newly generated villages
+MaxVillagersPerChunk=2
+ChunksPerTick=2
+SaveIntervalSeconds=30
+
+[IronGolem]                       ; village iron golem guard (off by default)
+EnableGuard=0                     ; guard behaviour
+EnableVillageGolemSpawning=0      ; spawn guards in villages
+MaxGolemsPerVillage=2
+VillageGolemRadius=48
 ```
+
+### Optional village ecology (both switches default to 0)
+
+- `[VillageLife] EnableVillageSpawning`: when a chunk first loads, if it was never scanned and lies
+  in a candidate biome, villagers are spawned using wooden doors as the village marker. Scanned
+  chunks are persisted in `village_scanned.txt` (delete it to re-scan everything once).
+- `[IronGolem] EnableVillageGolemSpawning` + `EnableGuard`: spawns 1–2 iron golem guards in
+  village chunks and lets them fight nearby hostiles with the **engine's own combat AI**. The plugin
+  only injects a target (one simulated hit, healed back immediately) and issues the chase path.
+- Console: `villagelife`, `villagelife flush`, `villagelife scan <cx> <cz>`, `golemguard`.
 
 - Write keys **without spaces around `=`**. Cuberite counts those spaces as part of the key name,
   the lookup fails, and the option silently falls back to its default.

@@ -2,6 +2,43 @@
 
 **English** · [中文](CHANGELOG.zh-CN.md) · [README](README.md)
 
+## v2.5 — 2026-09-25
+
+### Added (both features default to off; see `settings.ini`)
+
+- **Villagers in newly generated villages** (`[VillageLife] EnableVillageSpawning`)
+  - When a chunk first becomes available (generated or loaded from disk) it is queued only if it
+    has never been scanned and lies in a candidate biome; the scanning cost is spread over ticks
+    via `ChunksPerTick` so a chunk-load burst cannot stall the tick thread.
+  - Scanned chunks are marked in memory and **appended** to `village_scanned.txt`, which is read
+    back on startup, so a chunk is never scanned twice. Spawning is skipped when villagers already
+    exist within 24 blocks (guards against duplicates if a mark is lost).
+  - Villages are recognised by wooden doors (a player-built door house is a false positive).
+  - Console: `villagelife` / `villagelife flush` / `villagelife scan <cx> <cz>`.
+
+- **Village iron golem guard** (`[IronGolem] EnableGuard`, `EnableVillageGolemSpawning`)
+  - Spawning: when a scanned village chunk has enough doors and fewer than `MaxGolemsPerVillage`
+    golems nearby, one guard is spawned (a simplified take on 1.12; the strict rules need village
+    aggregation: doors > 20, golems < villagers/10, 1-in-7000 per tick).
+  - Guarding: Cuberite's `cIronGolem` extends `cAggressiveMonster`, so its combat AI is complete,
+    but as a neutral mob it only acquires a target when **damaged**. The plugin fakes one attack
+    with `TakeDamage` to inject the target and issues `MoveToPosition` to close the distance;
+    chasing, attacking, cooldowns, knockback and difficulty scaling stay engine-side.
+  - **Minimal simulated damage**: Core overrides `FinalDamage` by attacker class (zombie 2/3/4),
+    so the lost health is `Heal`ed back immediately (net loss 0), throttled by a per-target
+    cooldown plus a per-golem global minimum inject interval.
+  - Console: `golemguard`.
+
+### Changed
+
+- Removed the villager breeding prototype (trade hook, `Willing` / `BabyBornAge` state).
+
+### Notes
+
+- Both switches default to 0; when enabled, **existing** villages are populated the first time
+  their chunks load while still unmarked.
+- Deleting `village_scanned.txt` makes every chunk eligible for one more scan.
+
 ## v2.4 — 2026-09-25
 
 ### Changed
