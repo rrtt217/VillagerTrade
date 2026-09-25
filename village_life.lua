@@ -24,6 +24,8 @@ local village_life = {}
 -- 配置（默认值；Initialize 中由 settings.ini [VillageLife] 覆盖）
 -- ============================================================================
 village_life.EnableVillageSpawning = false
+-- 是否需要扫描区块（由 Initialize 计算：村民生成 或 铁傀儡村庄生成 任一开启）
+village_life.EnableScanning = false
 -- 单个村庄区块最多生成多少名村民（村庄跨多个区块，实际总数会更大）
 village_life.MaxVillagersPerChunk = 2
 -- 每 tick 每个世界最多扫描多少个区块（限制单 tick 开销）
@@ -232,6 +234,13 @@ local function ProcessChunk(World, entry)
     if #doors == 0 then
         return
     end
+    -- 交给铁傀儡守卫模块决定是否在这个村庄区块放一只守卫（默认关闭）
+    if IronGolemGuard and IronGolemGuard.OnVillageChunkScanned then
+        IronGolemGuard.OnVillageChunkScanned(World, cx, cz, doors)
+    end
+    if not village_life.EnableVillageSpawning then
+        return
+    end
     if HasVillagersNear(World, baseX + 8, baseZ + 8, DEDUP_RADIUS) then
         DEBUGLOG("区块(" .. cx .. "," .. cz .. ") 有 " .. #doors .. " 扇门，但附近已有村民，跳过生成。")
         return
@@ -245,7 +254,7 @@ end
 
 -- 区块首次可用（生成或从磁盘加载）时入队；已扫描/已排队/非候选生物群系直接跳过。
 function village_life.OnChunkAvailable(World, ChunkX, ChunkZ)
-    if not village_life.EnableVillageSpawning then
+    if not village_life.EnableScanning then
         return false
     end
     local key = KeyOf(World:GetName(), ChunkX, ChunkZ)
@@ -262,7 +271,7 @@ end
 
 -- 每 tick 消化扫描队列，并按间隔刷盘。
 function village_life.OnWorldTick(World, TimeDelta)
-    if not village_life.EnableVillageSpawning then
+    if not village_life.EnableScanning then
         return false
     end
     local worldName = World:GetName()
@@ -319,9 +328,9 @@ function village_life.GetStatus()
         scannedCount = scannedCount + 1
     end
     return string.format(
-        "VillageLife: 村庄生成=%s 扫描队列=%d(总队列 %d) 已扫描=%d 待落盘=%d",
-        tostring(village_life.EnableVillageSpawning), queuedCount, #ScanQueue,
-        scannedCount, #PendingWrites)
+        "VillageLife: 区块扫描=%s 村民生成=%s 扫描队列=%d(总队列 %d) 已扫描=%d 待落盘=%d",
+        tostring(village_life.EnableScanning), tostring(village_life.EnableVillageSpawning),
+        queuedCount, #ScanQueue, scannedCount, #PendingWrites)
 end
 
 return village_life

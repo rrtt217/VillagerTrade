@@ -43,6 +43,26 @@ function Initialize(Plugin)
     LOG("配置: EnableVillageSpawning=" .. tostring(_G.VillageLifeSettings.EnableVillageSpawning)
         .. " ChunksPerTick=" .. tostring(_G.VillageLifeSettings.ChunksPerTick))
 
+    -- 铁傀儡守卫（目标注入 / 村庄生成）：默认关闭，见 settings.ini [IronGolem]
+    _G.IronGolemGuardSettings = {
+        EnableGuard               = Config:GetValueSetB("IronGolem", "EnableGuard", false),
+        GuardRadius               = Config:GetValueSetI("IronGolem", "GuardRadius", 16),
+        CheckIntervalTicks        = Config:GetValueSetI("IronGolem", "CheckIntervalTicks", 20),
+        InjectCooldownSeconds     = Config:GetValueSetI("IronGolem", "InjectCooldownSeconds", 10),
+        MinInjectIntervalSeconds  = Config:GetValueSetI("IronGolem", "MinInjectIntervalSeconds", 2),
+        HealAfterInject           = Config:GetValueSetB("IronGolem", "HealAfterInject", true),
+        RequireLineOfSight        = Config:GetValueSetB("IronGolem", "RequireLineOfSight", true),
+        PursueTarget              = Config:GetValueSetB("IronGolem", "PursueTarget", true),
+        PursueStopDistance        = Config:GetValueSetI("IronGolem", "PursueStopDistance", 2),
+        PursueRefreshDistance     = Config:GetValueSetI("IronGolem", "PursueRefreshDistance", 2),
+        EnableVillageGolemSpawning = Config:GetValueSetB("IronGolem", "EnableVillageGolemSpawning", false),
+        MinDoorsInChunk           = Config:GetValueSetI("IronGolem", "MinDoorsInChunk", 2),
+        MaxGolemsPerVillage       = Config:GetValueSetI("IronGolem", "MaxGolemsPerVillage", 2),
+        VillageGolemRadius        = Config:GetValueSetI("IronGolem", "VillageGolemRadius", 48),
+    }
+    LOG("配置: IronGolem.EnableGuard=" .. tostring(_G.IronGolemGuardSettings.EnableGuard)
+        .. " EnableVillageGolemSpawning=" .. tostring(_G.IronGolemGuardSettings.EnableVillageGolemSpawning))
+
     -- Initialize trades from trades.txt
 	LOG("Initialised version " .. Plugin:GetVersion())
     -- Use external parser module to parse trades.txt
@@ -133,6 +153,25 @@ function Initialize(Plugin)
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.BindConsoleCommand("villagelife", HandleVillageLifeCommand, " - 显示村庄生态状态")
 
+    -- 加载铁傀儡守卫模块（目标注入 + 村庄生成；战斗 AI 由引擎负责）
+    local iron_golem_guard = require("iron_golem_guard")
+    if not iron_golem_guard or type(iron_golem_guard) ~= "table" then
+        LOG("Error: could not load iron_golem_guard.lua")
+        return
+    end
+    _G.IronGolemGuard = iron_golem_guard
+    for k, v in pairs(_G.IronGolemGuardSettings or {}) do
+        iron_golem_guard[k] = v
+    end
+    -- 区块扫描同时服务"村民生成"和"村庄铁傀儡生成"：任一开启就需要扫描
+    village_life.EnableScanning = village_life.EnableVillageSpawning
+        or iron_golem_guard.EnableVillageGolemSpawning
+    LOG("配置: 村庄区块扫描=" .. tostring(village_life.EnableScanning))
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.AddHook(cPluginManager.HOOK_WORLD_TICK, IronGolemGuardOnWorldTick)
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.BindConsoleCommand("golemguard", HandleGolemGuardCommand, " - 显示铁傀儡守卫状态")
+
     -- 注册钩子
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.AddHook(cPluginManager.HOOK_PLAYER_RIGHT_CLICKING_ENTITY, TradeOnRightClickingVillager)
@@ -220,6 +259,18 @@ function VillageLifeOnWorldTick(World, TimeDelta)
         return VillageLife.OnWorldTick(World, TimeDelta)
     end
     return false
+end
+
+function IronGolemGuardOnWorldTick(World, TimeDelta)
+    if IronGolemGuard then
+        return IronGolemGuard.OnWorldTick(World, TimeDelta)
+    end
+    return false
+end
+
+function HandleGolemGuardCommand(Split)
+    LOG(IronGolemGuard and IronGolemGuard.GetStatus() or "IronGolemGuard 未加载")
+    return true
 end
 
 function HandleVillageLifeCommand(Split)
