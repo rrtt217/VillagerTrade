@@ -33,6 +33,16 @@ function Initialize(Plugin)
     EnableVillagerSpawnEggCrafting = Config:GetValueSetB("Features", "EnableVillagerSpawnEggCrafting", true)
     LOG("配置: EnableVillagerSpawnEggCrafting=" .. tostring(EnableVillagerSpawnEggCrafting))
 
+    -- 村庄生态（新村庄自动生成村民；持久化"每区块只扫一次"）：默认关闭，见 settings.ini [VillageLife]
+    _G.VillageLifeSettings = {
+        EnableVillageSpawning = Config:GetValueSetB("VillageLife", "EnableVillageSpawning", false),
+        MaxVillagersPerChunk  = Config:GetValueSetI("VillageLife", "MaxVillagersPerChunk", 2),
+        ChunksPerTick         = Config:GetValueSetI("VillageLife", "ChunksPerTick", 2),
+        SaveIntervalSeconds   = Config:GetValueSetI("VillageLife", "SaveIntervalSeconds", 30),
+    }
+    LOG("配置: EnableVillageSpawning=" .. tostring(_G.VillageLifeSettings.EnableVillageSpawning)
+        .. " ChunksPerTick=" .. tostring(_G.VillageLifeSettings.ChunksPerTick))
+
     -- Initialize trades from trades.txt
 	LOG("Initialised version " .. Plugin:GetVersion())
     -- Use external parser module to parse trades.txt
@@ -103,6 +113,25 @@ function Initialize(Plugin)
 
     -- 保存迁移后的村民数据
     villager_manager.SaveVillagerData()
+
+    -- 加载村庄生态模块（新村庄自动生成村民；已扫描区块标记持久化到 village_scanned.txt）
+    local village_life = require("village_life")
+    if not village_life or type(village_life) ~= "table" then
+        LOG("Error: could not load village_life.lua")
+        return
+    end
+    _G.VillageLife = village_life
+    for k, v in pairs(_G.VillageLifeSettings or {}) do
+        village_life[k] = v
+    end
+    -- 先读回已扫描标记，再注册钩子，避免启动瞬间把已扫过的区块重新入队
+    village_life.LoadScanned()
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.AddHook(cPluginManager.HOOK_CHUNK_AVAILABLE, VillageLifeOnChunkAvailable)
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.AddHook(cPluginManager.HOOK_WORLD_TICK, VillageLifeOnWorldTick)
+---@diagnostic disable-next-line: param-type-mismatch
+    cPluginManager.BindConsoleCommand("villagelife", HandleVillageLifeCommand, " - 显示村庄生态状态")
 
     -- 注册钩子
 ---@diagnostic disable-next-line: param-type-mismatch
@@ -176,11 +205,53 @@ function SaveVillagerDataOnPlayerDestroyed(Player)
     end
 end
 
+-- ============================================================================
+-- 村庄生态：钩子转发与状态命令
+-- ============================================================================
+function VillageLifeOnChunkAvailable(World, ChunkX, ChunkZ)
+    if VillageLife then
+        return VillageLife.OnChunkAvailable(World, ChunkX, ChunkZ)
+    end
+    return false
+end
+
+function VillageLifeOnWorldTick(World, TimeDelta)
+    if VillageLife then
+        return VillageLife.OnWorldTick(World, TimeDelta)
+    end
+    return false
+end
+
+function HandleVillageLifeCommand(Split)
+    if not VillageLife then
+        LOG("VillageLife 未加载")
+        return true
+    end
+    local sub = Split[2]
+    if sub == "flush" then
+        LOG("VillageLife: 落盘=" .. tostring(VillageLife.FlushScanned()))
+    elseif sub == "scan" and Split[3] and Split[4] then
+        local cx, cz = tonumber(Split[3]), tonumber(Split[4])
+        if cx and cz then
+            LOG("VillageLife: " .. VillageLife.ForceScan(cRoot:Get():GetDefaultWorld(), cx, cz))
+        else
+            LOG("VillageLife: 用法 villagelife scan <chunkX> <chunkZ>")
+        end
+    else
+        LOG(VillageLife.GetStatus() .. "  (villagelife flush | villagelife scan <cx> <cz>)")
+    end
+    return true
+end
+
 function OnDisable()
     LOG("Saving villager data...")
     -- 保存村民数据（经验、上次刷新Age）
     if VillagerManager then
         VillagerManager.SaveVillagerData()
+    end
+    -- 落盘"已扫描区块"标记（追加写，避免下次启动重复扫描）
+    if VillageLife and VillageLife.FlushScanned then
+        VillageLife.FlushScanned()
     end
     LOG("Shutting down...")
 end
