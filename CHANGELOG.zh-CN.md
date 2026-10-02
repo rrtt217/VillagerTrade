@@ -2,6 +2,25 @@
 
 [English](CHANGELOG.md) · **中文** · [说明文档](README.zh-CN.md)
 
+## v2.6 — 2026-09-25
+
+### 移除
+
+- **新村庄自动生成村民**（原 `[VillageLife] EnableVillageSpawning`）—— 计划迁到独立插件。
+  `village_life.lua` 保留为纯"村庄区块扫描"：只记录含门村庄区块（门数 + 一个门坐标）并
+  持久化到 `village_scanned.txt`，**扫描阶段不再生成任何实体**。
+
+### 变更
+
+- **村庄铁傀儡生成改为"周期性、满足条件才生成"**：不再在扫描到区块的那一刻立即生成。
+  由 `[IronGolem] EnableVillageGolemSpawning` 控制，每 `VillageCheckSeconds` 秒复查一次，
+  要求「门数 ≥ MinDoorsInChunk」且「半径内村民数 ≥ MinVillagers」且「半径内铁傀儡数 <
+  MaxGolemsPerVillage」，全部满足才生成 1 只。
+- `VillageGolemRadius` 默认 48 → 64：村庄跨度可达约 96 格，48 时边缘区块会被当成另一个村子
+  （实测一个村庄出 3 只），64 时稳定 1~2 只。
+- 新增 `MinVillagers`（默认 3）、`VillageCheckSeconds`（默认 30）。
+- 注：村民不再由本插件生成，`MinVillagers` 需由其它来源的村民满足。
+
 ## v2.5 — 2026-09-25
 
 ### 新增（两个特性默认都是关闭的，见 `settings.ini`）

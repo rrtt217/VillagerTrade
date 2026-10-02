@@ -1,7 +1,14 @@
 -- iron_golem_guard.lua
--- 村庄铁傀儡守卫（原型，默认关闭，见 settings.ini [IronGolem]）
+-- 铁傀儡：守卫行为 + 村庄里的"周期性满足条件才生成"（原型，默认关闭，见 settings.ini [IronGolem]）
 --
--- 背景（源码 + 运行时均已核实）：
+-- 两部分：
+--   ① 守卫（EnableGuard）：让**已经存在**的铁傀儡攻击附近的敌对怪。
+--   ② 村庄生成（EnableVillageGolemSpawning）：周期性检查"含门村庄区块"，当
+--      「门数达标 + 附近村民数达标 + 附近铁傀儡数未达上限」时生成一只守卫。
+--      注意：**不在扫描到区块的那一刻生成**，一切生成都发生在这个周期判定里。
+--      （严格 1.12 的村庄聚合——门 > 20、傀儡数 < 村民数/10、每 tick 1/7000——留作后续。）
+--
+-- 守卫部分的背景（源码 + 运行时均已核实）：
 --   * 类链是 cIronGolem : cPassiveAggressiveMonster : cAggressiveMonster : cMonster : cPawn
 --     —— 铁傀儡就是 cMonster，并且继承了完整的战斗 AI：
 --         InStateChasing()  -> MoveToPosition(target)
@@ -13,16 +20,14 @@
 --     cMonster::DoTakeDamage() 才会 SetTarget(TDI.Attacker)。
 --   * Lua 侧没有 GetTarget/SetTarget 绑定，所以插件只能"伪造一次攻击"来注入目标。
 --
--- 模拟伤害的最小化（这是本模块最在意的点）：
+-- 模拟伤害的最小化（守卫部分最在意的点）：
 --   Core 插件在 HOOK_TAKE_DAMAGE 里按**攻击者类**覆盖 FinalDamage
 --   （MobDamages[cZombie]={2,3,4}、MobDamages[cSkeleton]={2,2,3}……按世界难度取下标）。
 --   所以只要攻击者是这些常见敌对怪，注入给傀儡的伤害至少就是 2/3/4（普通难度=3），
 --   我们传的 RawDamage 再小也会被覆盖。因此这里：
---     1) 用 4 参重载 TakeDamage(dtMobAttack, enemy, 1, 0)：RawDamage=1、Knockback=0
---        （对不在难度表里的攻击者，实际就只掉 1 点）；
+--     1) 用 4 参重载 TakeDamage(dtMobAttack, enemy, 1, 0)：RawDamage=1、Knockback=0；
 --     2) 注入后立刻把掉的血 Heal 回去 —— 傀儡**净损失为 0**；
---     3) 同一个傀儡对同一个目标只注入一次，另加 InjectCooldownSeconds 兜底，
---        避免 cMonster::DoTakeDamage 里的受击音效被反复触发。
+--     3) 同目标冷却 + 每傀儡全局最小注入间隔两道节流，避免受击音效被反复触发。
 
 local iron_golem_guard = {}
 
@@ -37,7 +42,6 @@ iron_golem_guard.CheckIntervalTicks = 20
 -- 同一傀儡对同一目标的最短重复注入间隔（秒，兜底用）
 iron_golem_guard.InjectCooldownSeconds = 10
 -- 同一傀儡的"全局"最小注入间隔（秒）：不管目标换没换，两次注入至少隔这么久。
--- 人海战里目标会频繁切换，没有它会出现大量"刚注入完又换目标再注入"的无效伤害/音效。
 iron_golem_guard.MinInjectIntervalSeconds = 2
 -- 注入后把模拟伤害补回去（净损失 0）
 iron_golem_guard.HealAfterInject = true
@@ -50,24 +54,30 @@ iron_golem_guard.PursueStopDistance = 2.0
 -- 目标移动超过这个距离才重新下发路径（避免每 tick 重置寻路）
 iron_golem_guard.PursueRefreshDistance = 1.5
 
--- 村庄铁傀儡生成（简化版，默认关闭）
+-- 村庄铁傀儡生成（周期性"满足条件才生成"，默认关闭）
 iron_golem_guard.EnableVillageGolemSpawning = false
 -- 区块内至少多少扇门才认为"这里有村庄"
 iron_golem_guard.MinDoorsInChunk = 2
+-- 半径内至少多少名村民才生成守卫（1.12 是"傀儡数 < 村民数/10"，这里先用绝对阈值近似）
+iron_golem_guard.MinVillagers = 3
 -- 半径内最多维持多少只铁傀儡
 iron_golem_guard.MaxGolemsPerVillage = 2
--- 统计"附近已有多少只傀儡"的半径。必须大于村庄跨度（约 48~96 格），
--- 否则相邻区块互相看不到对方生成的傀儡，上限就形同虚设（实测 24 时一个村庄出了 5 只）。
-iron_golem_guard.VillageGolemRadius = 48
+-- 统计"附近村民/傀儡"的半径。必须覆盖村庄跨度，否则相邻区块互相看不到对方生成的傀儡，
+-- 上限就形同虚设（实测：24 时一个村庄出 5 只；48 时仍出 3 只——村庄跨约 96 格；
+-- 64 时能覆盖常见村庄，稳定 1~2 只）。严格解决需要先做村庄聚合。
+iron_golem_guard.VillageGolemRadius = 64
+-- 村庄生成检查间隔（秒）
+iron_golem_guard.VillageCheckSeconds = 30
 
 -- ============================================================================
 -- 内部状态（插件重载即重置）
 -- ============================================================================
-local LastCheckAge = {}   -- worldName -> 上次检查的世界年龄
-local GolemState = {}     -- golemUniqueID -> { enemyID =, nextInjectAge =, issuedPos = }
--- 同一 tick 内刚生成的傀儡（cWorld:ForEachEntity 要到下一 tick 才看得到），
--- 用于让 MaxGolemsPerVillage 的计数在同一批扫描里也准确。
-local RecentGolems = {}   -- { { x =, z =, age = } }
+local LastCheckAge = {}          -- worldName -> 上次守卫检查的世界年龄
+local LastVillageCheckAge = {}   -- worldName -> 上次村庄生成检查的世界年龄
+local GolemState = {}            -- golemUniqueID -> { enemyID =, nextInjectAge =, nextAnyInjectAge =, issuedPos = }
+-- 同一轮检查里刚生成的傀儡（cWorld:ForEachEntity 要到下一 tick 才看得到），
+-- 用于让 MaxGolemsPerVillage 的计数准确。
+local RecentGolems = {}          -- { { x =, z =, age = } }
 
 iron_golem_guard.InjectCount = 0
 iron_golem_guard.PursueCount = 0
@@ -76,6 +86,17 @@ iron_golem_guard.SpawnCount = 0
 local function DistanceSq(a, b)
     local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
     return dx * dx + dy * dy + dz * dz
+end
+
+local function CountPointsNear(points, x, z, radiusSq)
+    local count = 0
+    for _, point in ipairs(points) do
+        local dx, dz = point.x - x, point.z - z
+        if dx * dx + dz * dz <= radiusSq then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 local function HasLineOfSight(World, a, b)
@@ -89,7 +110,7 @@ local function HasLineOfSight(World, a, b)
 end
 
 -- ============================================================================
--- 目标注入
+-- ① 守卫：目标注入 + 追击
 -- ============================================================================
 
 -- 伪造"敌人打了傀儡一次"。引擎随即 cMonster::DoTakeDamage -> SetTarget(敌人)，
@@ -155,16 +176,12 @@ local function PursueTarget(golem, enemy, distanceSq)
     iron_golem_guard.PursueCount = iron_golem_guard.PursueCount + 1
 end
 
-function iron_golem_guard.OnWorldTick(World, TimeDelta)
-    if not iron_golem_guard.EnableGuard then
-        return false
-    end
-
+local function GuardTick(World)
     local worldName = World:GetName()
     local age = World:GetWorldAge()
     local interval = iron_golem_guard.CheckIntervalTicks
     if age - (LastCheckAge[worldName] or (-interval - 1)) < interval then
-        return false
+        return
     end
     LastCheckAge[worldName] = age
 
@@ -180,7 +197,7 @@ function iron_golem_guard.OnWorldTick(World, TimeDelta)
         return false
     end)
     if (#golems == 0) or (#hostiles == 0) then
-        return false
+        return
     end
 
     local radiusSq = iron_golem_guard.GuardRadius * iron_golem_guard.GuardRadius
@@ -206,67 +223,113 @@ function iron_golem_guard.OnWorldTick(World, TimeDelta)
             end
         end
     end
-    return false
 end
 
 -- ============================================================================
--- 村庄铁傀儡生成（简化版，由 village_life 在扫描到含门的村庄区块时回调）
+-- ② 村庄生成：周期性"满足条件才生成"（扫描阶段不生成任何东西）
 -- ============================================================================
--- 真实 1.12 是"村庄级"判定：门 > 20 且 铁傀儡数 < 村民数/10，每 tick 1/7000 概率，
--- 需要先把门聚合为村庄（中心/半径/村民数）。这里先用"区块门数 + 附近傀儡上限"近似，
--- 保证村庄里能稳定出现 1~2 只守卫；要严格还原 1.12 需要补村庄聚合。
-function iron_golem_guard.OnVillageChunkScanned(World, chunkX, chunkZ, doors)
-    if not iron_golem_guard.EnableVillageGolemSpawning then
-        return
-    end
-    if #doors < iron_golem_guard.MinDoorsInChunk then
-        return
-    end
 
-    local baseX, baseZ = chunkX * 16, chunkZ * 16
+local function TrySpawnVillageGolem(World, chunk, villagers, golems, radiusSq, worldAge)
+    if chunk.doors < iron_golem_guard.MinDoorsInChunk then
+        return
+    end
+    local baseX, baseZ = chunk.cx * 16, chunk.cz * 16
     local centerX, centerZ = baseX + 8, baseZ + 8
-    local radiusSq = iron_golem_guard.VillageGolemRadius * iron_golem_guard.VillageGolemRadius
 
-    local worldAge = World:GetWorldAge()
-    local keptRecent = {}
-    for _, recent in ipairs(RecentGolems) do
-        if worldAge - recent.age <= 40 then
-            keptRecent[#keptRecent + 1] = recent
-        end
+    -- 区块必须已加载（村民/傀儡/方块都只能看到已加载的部分）
+    if not World:TryGetHeight(centerX, centerZ) then
+        return
     end
-    RecentGolems = keptRecent
-
-    local golemCount = 0
-    World:ForEachEntity(function(Entity)
-        if Entity:IsMob() and (Entity:GetMobType() == mtIronGolem) then
-            local pos = Entity:GetPosition()
-            local dx, dz = pos.x - centerX, pos.z - centerZ
-            if dx * dx + dz * dz <= radiusSq then
-                golemCount = golemCount + 1
-            end
-        end
-        return false
-    end)
-    for _, recent in ipairs(RecentGolems) do
-        local dx, dz = recent.x - centerX, recent.z - centerZ
-        if dx * dx + dz * dz <= radiusSq then
-            golemCount = golemCount + 1
-        end
+    -- 条件 1：附近村民数量达标
+    if CountPointsNear(villagers, centerX, centerZ, radiusSq) < iron_golem_guard.MinVillagers then
+        return
     end
+    -- 条件 2：附近傀儡数量未达上限（含本轮刚生成的）
+    local golemCount = CountPointsNear(golems, centerX, centerZ, radiusSq)
+        + CountPointsNear(RecentGolems, centerX, centerZ, radiusSq)
     if golemCount >= iron_golem_guard.MaxGolemsPerVillage then
         return
     end
 
-    local random = VillagerManager and VillagerManager.Random
-    local index = random and random.Int(1, #doors) or 1
-    local door = doors[index]
-    local id = World:SpawnMob(baseX + door.x + 0.5, door.y, baseZ + door.z + 0.5, mtIronGolem, false)
-    if id and id >= 0 then
-        RecentGolems[#RecentGolems + 1] = { x = baseX + door.x, z = baseZ + door.z, age = worldAge }
-        iron_golem_guard.SpawnCount = iron_golem_guard.SpawnCount + 1
-        LOG("村庄铁傀儡：区块(" .. chunkX .. "," .. chunkZ .. ") 附近已有 " .. golemCount
-            .. " 只，生成 1 只（该区块 " .. #doors .. " 扇门）。")
+    -- 生成位置：优先用扫描时记下的那扇门，否则用区块中心的地面
+    local x, z, y
+    if chunk.doorX then
+        x = baseX + chunk.doorX + 0.5
+        z = baseZ + chunk.doorZ + 0.5
+        y = chunk.doorY
+    else
+        x = centerX + 0.5
+        z = centerZ + 0.5
+        local ok, height = World:TryGetHeight(centerX, centerZ)
+        y = ok and (height + 1) or nil
     end
+    if not y then
+        return
+    end
+
+    local id = World:SpawnMob(x, y, z, mtIronGolem, false)
+    if id and id >= 0 then
+        RecentGolems[#RecentGolems + 1] = { x = x, z = z, age = worldAge }
+        iron_golem_guard.SpawnCount = iron_golem_guard.SpawnCount + 1
+        LOG("村庄铁傀儡：区块(" .. chunk.cx .. "," .. chunk.cz .. ") 门=" .. chunk.doors
+            .. " 附近傀儡=" .. golemCount .. "，满足条件，生成 1 只。")
+    end
+end
+
+local function VillageSpawnTick(World)
+    if not (VillageLife and VillageLife.GetVillageChunks) then
+        return
+    end
+    local worldName = World:GetName()
+    local age = World:GetWorldAge()
+    local interval = iron_golem_guard.VillageCheckSeconds * 20
+    if age - (LastVillageCheckAge[worldName] or (-interval - 1)) < interval then
+        return
+    end
+    LastVillageCheckAge[worldName] = age
+
+    -- 一次遍历收集村民 / 傀儡位置
+    local villagers, golems = {}, {}
+    World:ForEachEntity(function(Entity)
+        if Entity:IsMob() then
+            local mobType = Entity:GetMobType()
+            if (mobType == mtVillager) or (mobType == mtIronGolem) then
+                local pos = Entity:GetPosition()
+                local list = (mobType == mtVillager) and villagers or golems
+                list[#list + 1] = { x = pos.x, z = pos.z }
+            end
+        end
+        return false
+    end)
+
+    -- 清理过期的"刚生成"记录
+    local kept = {}
+    for _, recent in ipairs(RecentGolems) do
+        if age - recent.age <= 100 then
+            kept[#kept + 1] = recent
+        end
+    end
+    RecentGolems = kept
+
+    local radiusSq = iron_golem_guard.VillageGolemRadius * iron_golem_guard.VillageGolemRadius
+    for _, chunk in ipairs(VillageLife.GetVillageChunks()) do
+        if chunk.world == worldName then
+            TrySpawnVillageGolem(World, chunk, villagers, golems, radiusSq, age)
+        end
+    end
+end
+
+-- ============================================================================
+-- 钩子入口
+-- ============================================================================
+function iron_golem_guard.OnWorldTick(World, TimeDelta)
+    if iron_golem_guard.EnableGuard then
+        GuardTick(World)
+    end
+    if iron_golem_guard.EnableVillageGolemSpawning then
+        VillageSpawnTick(World)
+    end
+    return false
 end
 
 -- ============================================================================
@@ -278,10 +341,10 @@ function iron_golem_guard.GetStatus()
         tracked = tracked + 1
     end
     return string.format(
-        "IronGolemGuard: 守卫=%s 村庄生成=%s 注入=%d 追击=%d 跟踪傀儡=%d 村庄生成数=%d 半径=%d 冷却=%ds",
+        "IronGolemGuard: 守卫=%s 村庄生成=%s 注入=%d 追击=%d 村庄生成数=%d 跟踪傀儡=%d 半径=%d 冷却=%ds",
         tostring(iron_golem_guard.EnableGuard), tostring(iron_golem_guard.EnableVillageGolemSpawning),
-        iron_golem_guard.InjectCount, iron_golem_guard.PursueCount, tracked,
-        iron_golem_guard.SpawnCount, iron_golem_guard.GuardRadius, iron_golem_guard.InjectCooldownSeconds)
+        iron_golem_guard.InjectCount, iron_golem_guard.PursueCount, iron_golem_guard.SpawnCount,
+        tracked, iron_golem_guard.GuardRadius, iron_golem_guard.InjectCooldownSeconds)
 end
 
 return iron_golem_guard

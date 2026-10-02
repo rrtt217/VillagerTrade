@@ -18,8 +18,8 @@
 - **阻止命名**：命名牌无法给插件管理的村民改名。
 - **村民刷怪蛋**：用 1 绿宝石 + 1 鸡蛋合成，或从 `vtGeneric` 村民处购买（合成配方有开关，
   见 `settings.ini`）。
-- **可选的村庄生态**（默认关闭）：新村庄自动生成村民，以及村庄铁傀儡守卫——见下方
-  "可选的村庄生态"。
+- **可选的铁傀儡守卫**（默认关闭）：让已存在的铁傀儡攻击附近的敌对怪，并可在村庄里
+  "周期性满足条件才生成"守卫——见下方"可选的铁傀儡守卫"。
 
 ## 安装
 
@@ -32,32 +32,40 @@
 [Features]
 EnableVillagerSpawnEggCrafting=1   ; 1 绿宝石 + 1 鸡蛋 = 1 村民刷怪蛋
 
-[VillageLife]                     ; 村庄生态（默认关闭）
-EnableVillageSpawning=0           ; 新村庄自动生成村民
-MaxVillagersPerChunk=2
+[VillageLife]                     ; 村庄区块扫描（默认关闭）
 ChunksPerTick=2
 SaveIntervalSeconds=30
 
-[IronGolem]                       ; 村庄铁傀儡守卫（默认关闭）
-EnableGuard=0                     ; 守卫行为
-EnableVillageGolemSpawning=0      ; 在村庄里生成守卫
+[IronGolem]                       ; 铁傀儡（默认关闭）
+EnableGuard=0                     ; 让已有铁傀儡守卫（目标注入）
+EnableVillageGolemSpawning=0      ; 村庄里周期性满足条件才生成守卫
+MinDoorsInChunk=2
+MinVillagers=3
 MaxGolemsPerVillage=2
-VillageGolemRadius=48
+VillageGolemRadius=64
+VillageCheckSeconds=30
 ```
 
 - 键名**两侧不要写空格**：Cuberite 会把空格算进键名，导致读取失败并静默使用默认值。
 - 修改后需重载插件（`/reload` 或控制台 `reload`）。
 - 其余键（扫描深度、注入冷却、追击距离等）见 `settings.ini` 内的注释。
 
-### 可选的村庄生态（两组开关默认都是 0）
+### 可选的铁傀儡守卫（默认关闭）
 
-- `[VillageLife] EnableVillageSpawning`：区块首次加载时，若从未被扫描过且落在候选生物群系，
-  就以"木门"为特征生成村民；已扫描标记持久化在 `village_scanned.txt`（删掉该文件可让所有
-  区块重新参与一次扫描）。
-- `[IronGolem] EnableVillageGolemSpawning` + `EnableGuard`：在含门的村庄区块生成 1~2 只
-  铁傀儡守卫，并让它们用**引擎自带的战斗 AI** 攻击附近的敌对怪。插件只做两件薄事：注入目标
-  （让中性怪挨一次"模拟伤害"，随后立刻 Heal 回去）和下发追击路径。
-- 控制台：`villagelife`（状态）、`villagelife flush`、`villagelife scan <cx> <cz>`、`golemguard`。
+- `[IronGolem] EnableGuard`：让**已经存在**的铁傀儡攻击附近的敌对怪。Cuberite 的 `cIronGolem`
+  战斗 AI 是完整的，但它属于中性怪、只有挨打才会锁定目标，所以插件只做两件薄事：伪造一次攻击
+  完成"目标注入"，并按需下发追击路径；追击 / 攻击 / 冷却 / 击退 / 难度伤害都由引擎负责。
+  注入的模拟伤害会立刻 `Heal` 回去（傀儡净损失 0）。
+- `[IronGolem] EnableVillageGolemSpawning`：**周期性、满足条件才生成**守卫；扫描到区块时
+  不会立刻生成。每 `VillageCheckSeconds` 秒复查一次已扫描到的含门村庄区块，要求
+  「门数 ≥ MinDoorsInChunk」且「半径内村民数 ≥ MinVillagers」且「半径内铁傀儡数 <
+  MaxGolemsPerVillage」，全部满足才生成 1 只（`VillageGolemRadius` 需覆盖村庄跨度，
+  否则上限会被相邻区块绕过）。
+- 村庄区块由 `[VillageLife]` 的扫描记录并持久化到 `village_scanned.txt`
+  （每行 `<world> <cx> <cz> <doors> [门坐标]`；删掉该文件可让所有区块重新扫描一次）。
+- 控制台：`villagelife`（扫描状态）、`villagelife flush`、`villagelife scan <cx> <cz>`、`golemguard`。
+- 注：村民不再由本插件生成（原"新村庄自动生成村民"已移除，计划迁到独立插件），
+  因此 `MinVillagers` 条件需要由其它来源的村民满足。
 
 ## 交易界面操作
 

@@ -33,17 +33,15 @@ function Initialize(Plugin)
     EnableVillagerSpawnEggCrafting = Config:GetValueSetB("Features", "EnableVillagerSpawnEggCrafting", true)
     LOG("配置: EnableVillagerSpawnEggCrafting=" .. tostring(EnableVillagerSpawnEggCrafting))
 
-    -- 村庄生态（新村庄自动生成村民；持久化"每区块只扫一次"）：默认关闭，见 settings.ini [VillageLife]
+    -- 村庄区块扫描（持久化"每区块只扫一次"，供铁傀儡守卫的"村庄生成"使用）：
+    -- 默认关闭，见 settings.ini [VillageLife]
     _G.VillageLifeSettings = {
-        EnableVillageSpawning = Config:GetValueSetB("VillageLife", "EnableVillageSpawning", false),
-        MaxVillagersPerChunk  = Config:GetValueSetI("VillageLife", "MaxVillagersPerChunk", 2),
         ChunksPerTick         = Config:GetValueSetI("VillageLife", "ChunksPerTick", 2),
         SaveIntervalSeconds   = Config:GetValueSetI("VillageLife", "SaveIntervalSeconds", 30),
     }
-    LOG("配置: EnableVillageSpawning=" .. tostring(_G.VillageLifeSettings.EnableVillageSpawning)
-        .. " ChunksPerTick=" .. tostring(_G.VillageLifeSettings.ChunksPerTick))
+    LOG("配置: 村庄扫描 ChunksPerTick=" .. tostring(_G.VillageLifeSettings.ChunksPerTick))
 
-    -- 铁傀儡守卫（目标注入 / 村庄生成）：默认关闭，见 settings.ini [IronGolem]
+    -- 铁傀儡：守卫（目标注入）+ 村庄"周期性满足条件生成"：默认关闭，见 settings.ini [IronGolem]
     _G.IronGolemGuardSettings = {
         EnableGuard               = Config:GetValueSetB("IronGolem", "EnableGuard", false),
         GuardRadius               = Config:GetValueSetI("IronGolem", "GuardRadius", 16),
@@ -57,8 +55,10 @@ function Initialize(Plugin)
         PursueRefreshDistance     = Config:GetValueSetI("IronGolem", "PursueRefreshDistance", 2),
         EnableVillageGolemSpawning = Config:GetValueSetB("IronGolem", "EnableVillageGolemSpawning", false),
         MinDoorsInChunk           = Config:GetValueSetI("IronGolem", "MinDoorsInChunk", 2),
+        MinVillagers              = Config:GetValueSetI("IronGolem", "MinVillagers", 3),
         MaxGolemsPerVillage       = Config:GetValueSetI("IronGolem", "MaxGolemsPerVillage", 2),
-        VillageGolemRadius        = Config:GetValueSetI("IronGolem", "VillageGolemRadius", 48),
+        VillageGolemRadius        = Config:GetValueSetI("IronGolem", "VillageGolemRadius", 64),
+        VillageCheckSeconds       = Config:GetValueSetI("IronGolem", "VillageCheckSeconds", 30),
     }
     LOG("配置: IronGolem.EnableGuard=" .. tostring(_G.IronGolemGuardSettings.EnableGuard)
         .. " EnableVillageGolemSpawning=" .. tostring(_G.IronGolemGuardSettings.EnableVillageGolemSpawning))
@@ -134,7 +134,7 @@ function Initialize(Plugin)
     -- 保存迁移后的村民数据
     villager_manager.SaveVillagerData()
 
-    -- 加载村庄生态模块（新村庄自动生成村民；已扫描区块标记持久化到 village_scanned.txt）
+    -- 加载村庄区块扫描模块（已扫描标记持久化到 village_scanned.txt）
     local village_life = require("village_life")
     if not village_life or type(village_life) ~= "table" then
         LOG("Error: could not load village_life.lua")
@@ -151,7 +151,7 @@ function Initialize(Plugin)
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.AddHook(cPluginManager.HOOK_WORLD_TICK, VillageLifeOnWorldTick)
 ---@diagnostic disable-next-line: param-type-mismatch
-    cPluginManager.BindConsoleCommand("villagelife", HandleVillageLifeCommand, " - 显示村庄生态状态")
+    cPluginManager.BindConsoleCommand("villagelife", HandleVillageLifeCommand, " - 显示村庄区块扫描状态")
 
     -- 加载铁傀儡守卫模块（目标注入 + 村庄生成；战斗 AI 由引擎负责）
     local iron_golem_guard = require("iron_golem_guard")
@@ -163,9 +163,8 @@ function Initialize(Plugin)
     for k, v in pairs(_G.IronGolemGuardSettings or {}) do
         iron_golem_guard[k] = v
     end
-    -- 区块扫描同时服务"村民生成"和"村庄铁傀儡生成"：任一开启就需要扫描
-    village_life.EnableScanning = village_life.EnableVillageSpawning
-        or iron_golem_guard.EnableVillageGolemSpawning
+    -- 现在只有铁傀儡的"村庄生成"会消费区块扫描结果
+    village_life.EnableScanning = iron_golem_guard.EnableVillageGolemSpawning
     LOG("配置: 村庄区块扫描=" .. tostring(village_life.EnableScanning))
 ---@diagnostic disable-next-line: param-type-mismatch
     cPluginManager.AddHook(cPluginManager.HOOK_WORLD_TICK, IronGolemGuardOnWorldTick)
@@ -245,7 +244,7 @@ function SaveVillagerDataOnPlayerDestroyed(Player)
 end
 
 -- ============================================================================
--- 村庄生态：钩子转发与状态命令
+-- 村庄区块扫描：钩子转发与状态命令
 -- ============================================================================
 function VillageLifeOnChunkAvailable(World, ChunkX, ChunkZ)
     if VillageLife then

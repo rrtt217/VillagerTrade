@@ -1,5 +1,9 @@
 -- village_life.lua
--- 村庄生态：新村庄自动生成村民（默认关闭，见 settings.ini [VillageLife]）
+-- 村庄区块扫描（默认关闭，见 settings.ini [VillageLife]）
+--
+-- 作用：找出"含木门"的村庄区块，把「门数 + 一个门坐标」持久化下来，供铁傀儡守卫做
+--       **周期性、满足条件才生成**的判定（扫描本身不再生成任何东西）。
+--   注：原先的"新村庄自动生成村民"已移除，计划迁到独立插件。
 --
 -- 机制：持久化"每区块只扫一次"
 --   * 区块首次变为可用（HOOK_CHUNK_AVAILABLE；生成和从磁盘加载都算）时，
@@ -7,27 +11,19 @@
 --   * HOOK_WORLD_TICK 每 tick 最多处理 ChunksPerTick 个区块，把扫描开销摊到多个 tick，
 --     避免在"区块加载风暴"里一次性扫描大量区块而拖垮 tick 线程；
 --   * 扫描用世界 API（此时区块已加载），以"木门"作为村庄特征；
---   * 扫描完立刻在内存里标记，并追加写入 village_scanned.txt（节流刷盘 + OnDisable 刷盘）。
---     下次启动读回标记，同一个区块不会再扫第二遍。
+--   * 扫完立刻在内存里标记，并追加写入 village_scanned.txt（节流刷盘 + OnDisable 刷盘）。
+--     行格式：<world> <cx> <cz> <doors> [<doorX> <doorY> <doorZ>]（doorX/Y/Z 为区块内相对坐标）
+--     下次启动读回标记；门数 > 0 的区块进入 VillageChunks 列表供守卫消费。
 --
--- 依赖：VillagerManager（村民唯一标识符）、PLUGIN、LOG、DEBUGLOG。
---
--- 设计依据（均在本机运行时核实）：
---   * Cuberite 的村庄由生成器 finisher "Villages" + Prefabs/Villages/*.cubeset 放置，
---     cubeset 只含方块、不含实体 —— 村庄生成时不会自带村民。
---   * 向未加载区块 SpawnMob 会"成功"返回一个 ID，但实体立刻消失 —— 只能对已加载区块生成。
---   * 在 tick 线程里做大规模同步方块扫描会被看门狗判定死锁并 SIGABRT（实测）。
+-- 依赖：PLUGIN、LOG、DEBUGLOG。
 
 local village_life = {}
 
 -- ============================================================================
 -- 配置（默认值；Initialize 中由 settings.ini [VillageLife] 覆盖）
 -- ============================================================================
-village_life.EnableVillageSpawning = false
--- 是否需要扫描区块（由 Initialize 计算：村民生成 或 铁傀儡村庄生成 任一开启）
+-- 是否需要扫描区块（由 Initialize 计算：目前只有铁傀儡的"村庄生成"会用到）
 village_life.EnableScanning = false
--- 单个村庄区块最多生成多少名村民（村庄跨多个区块，实际总数会更大）
-village_life.MaxVillagersPerChunk = 2
 -- 每 tick 每个世界最多扫描多少个区块（限制单 tick 开销）
 village_life.ChunksPerTick = 2
 -- 已扫描标记的刷盘间隔（秒）
@@ -41,11 +37,11 @@ local DOOR_BLOCK = E_BLOCK_WOODEN_DOOR
 local DOOR_SCAN_DEPTH = 12
 -- 区块排队期间被卸载时，最多重试几次
 local MAX_SCAN_TRIES = 3
--- 判定"附近已有村民"的半径——即使标记因崩溃丢失，也不会重复生成
-local DEDUP_RADIUS = 24
 
 -- 已扫描区块：["<world>|<cx>|<cz>"] = true（内存 + village_scanned.txt 持久化）
 local Scanned = {}
+-- 含门村庄区块：{ world =, cx =, cz =, doors =, doorX =, doorY =, doorZ = }（供守卫周期判定）
+local VillageChunks = {}
 -- 已排队区块：key -> { world =, cx =, cz =, tries = }
 local Queued = {}
 -- 扫描队列（数组，元素是 key）
@@ -76,7 +72,7 @@ end
 -- 持久化
 -- ============================================================================
 
--- 启动时读回已扫描区块标记。
+-- 启动时读回已扫描标记与村庄区块（含门数）。
 function village_life.LoadScanned()
     SavePath = PLUGIN:GetLocalFolder() .. "/village_scanned.txt"
     local file = io.open(SavePath, "r")
@@ -84,26 +80,59 @@ function village_life.LoadScanned()
         LOG("未找到 village_scanned.txt，所有候选区块都视为未扫描。")
         return
     end
-    local loaded = 0
+    local loaded, villages = 0, 0
     for line in file:lines() do
-        local worldName, cx, cz = line:match("^(%S+)%s+(%-?%d+)%s+(%-?%d+)$")
-        if worldName then
-            Scanned[KeyOf(worldName, tonumber(cx), tonumber(cz))] = true
-            loaded = loaded + 1
+        local parts = {}
+        for token in line:gmatch("%S+") do
+            parts[#parts + 1] = token
+        end
+        if #parts >= 3 then
+            local worldName = parts[1]
+            local cx, cz = tonumber(parts[2]), tonumber(parts[3])
+            if cx and cz then
+                local doors = tonumber(parts[4] or "") or 0
+                local dx, dy, dz = tonumber(parts[5] or ""), tonumber(parts[6] or ""), tonumber(parts[7] or "")
+                local key = KeyOf(worldName, cx, cz)
+                if not Scanned[key] then
+                    Scanned[key] = true
+                    loaded = loaded + 1
+                    if doors > 0 then
+                        VillageChunks[#VillageChunks + 1] = {
+                            world = worldName, cx = cx, cz = cz, doors = doors,
+                            doorX = dx, doorY = dy, doorZ = dz,
+                        }
+                        villages = villages + 1
+                    end
+                end
+            end
         end
     end
     file:close()
-    LOG("已加载 " .. loaded .. " 个已扫描区块标记。")
+    LOG("已加载 " .. loaded .. " 个已扫描区块标记（其中含门村庄区块 " .. villages .. " 个）。")
 end
 
--- 标记一个区块为已扫描，并加入待落盘队列。
-local function MarkScanned(worldName, cx, cz)
+-- 标记一个区块为已扫描，并加入待落盘队列；含门区块同时进入 VillageChunks。
+local function MarkScanned(worldName, cx, cz, doors, door)
     local key = KeyOf(worldName, cx, cz)
     if Scanned[key] then
         return
     end
     Scanned[key] = true
-    PendingWrites[#PendingWrites + 1] = worldName .. " " .. cx .. " " .. cz
+    doors = doors or 0
+    if door then
+        PendingWrites[#PendingWrites + 1] = string.format("%s %d %d %d %d %d %d",
+            worldName, cx, cz, doors, door.x, door.y, door.z)
+    else
+        PendingWrites[#PendingWrites + 1] = string.format("%s %d %d %d", worldName, cx, cz, doors)
+    end
+    if doors > 0 then
+        VillageChunks[#VillageChunks + 1] = {
+            world = worldName, cx = cx, cz = cz, doors = doors,
+            doorX = door and door.x or nil,
+            doorY = door and door.y or nil,
+            doorZ = door and door.z or nil,
+        }
+    end
 end
 
 -- 把待落盘的标记追加到文件（追加写，崩溃时最多丢最后一次刷盘）。
@@ -123,8 +152,13 @@ function village_life.FlushScanned()
     return true
 end
 
+-- 供铁傀儡守卫消费：已扫描到的含门村庄区块列表。
+function village_life.GetVillageChunks()
+    return VillageChunks
+end
+
 -- ============================================================================
--- 扫描与生成
+-- 扫描
 -- ============================================================================
 
 -- 只用 4 个采样点的生物群系判断，避免加载范围内的每个区块都做一次扫描。
@@ -168,50 +202,8 @@ local function ScanDoors(World, baseX, baseZ)
     return doors
 end
 
--- 附近是否已有村民（幂等保护：标记丢失时也不会重复生成）
-local function HasVillagersNear(World, blockX, blockZ, radius)
-    local radiusSq = radius * radius
-    local found = false
-    World:ForEachEntity(function(Entity)
-        if found then
-            return true
-        end
-        if Entity:IsMob() and Entity:GetMobType() == mtVillager then
-            local pos = Entity:GetPosition()
-            local dx, dz = pos.x - blockX, pos.z - blockZ
-            if dx * dx + dz * dz <= radiusSq then
-                found = true
-                return true
-            end
-        end
-        return false
-    end)
-    return found
-end
-
-local function SpawnVillagers(World, entry, doors)
-    local baseX, baseZ = entry.cx * 16, entry.cz * 16
-    local count = math.min(#doors, village_life.MaxVillagersPerChunk)
-    local spawned = 0
-    for i = 1, count do
-        local door = doors[i]
-        local id = World:SpawnMob(baseX + door.x + 0.5, door.y, baseZ + door.z + 0.5, mtVillager, false)
-        if id and id >= 0 then
-            World:DoWithEntityByID(id, function(Entity)
-                if VillagerManager then
-                    VillagerManager.EnsureVillagerID(Entity)
-                end
-            end)
-            spawned = spawned + 1
-        end
-    end
-    if spawned > 0 then
-        LOG("新村庄：区块(" .. entry.cx .. "," .. entry.cz .. ") 有 " .. #doors
-            .. " 扇门，生成 " .. spawned .. " 名村民。")
-    end
-end
-
--- 处理一个排队区块（每 tick 只处理有限个，见 OnWorldTick）
+-- 处理一个排队区块（每 tick 只处理有限个，见 OnWorldTick）。
+-- 只记录，不生成任何实体；生成交给铁傀儡守卫的周期性判定。
 local function ProcessChunk(World, entry)
     local cx, cz = entry.cx, entry.cz
     local baseX, baseZ = cx * 16, cz * 16
@@ -230,22 +222,7 @@ local function ProcessChunk(World, entry)
 
     local doors = ScanDoors(World, baseX, baseZ)
     DEBUGLOG("扫描区块(" .. cx .. "," .. cz .. ") 找到 " .. #doors .. " 扇门")
-    MarkScanned(entry.world, cx, cz)   -- 扫过一次就标记，不再重复扫
-    if #doors == 0 then
-        return
-    end
-    -- 交给铁傀儡守卫模块决定是否在这个村庄区块放一只守卫（默认关闭）
-    if IronGolemGuard and IronGolemGuard.OnVillageChunkScanned then
-        IronGolemGuard.OnVillageChunkScanned(World, cx, cz, doors)
-    end
-    if not village_life.EnableVillageSpawning then
-        return
-    end
-    if HasVillagersNear(World, baseX + 8, baseZ + 8, DEDUP_RADIUS) then
-        DEBUGLOG("区块(" .. cx .. "," .. cz .. ") 有 " .. #doors .. " 扇门，但附近已有村民，跳过生成。")
-        return
-    end
-    SpawnVillagers(World, entry, doors)
+    MarkScanned(entry.world, cx, cz, #doors, doors[1])
 end
 
 -- ============================================================================
@@ -298,21 +275,14 @@ function village_life.OnWorldTick(World, TimeDelta)
     return false
 end
 
--- 运维/调试：强制扫描一个区块（忽略"已扫描"标记），返回结果描述。
+-- 运维/调试：强制扫描一个区块（忽略"已扫描"标记，也不写标记），只返回结果描述。
 function village_life.ForceScan(World, cx, cz)
     local baseX, baseZ = cx * 16, cz * 16
     if not World:TryGetHeight(baseX + 8, baseZ + 8) then
         return "区块(" .. cx .. "," .. cz .. ") 未加载"
     end
     local doors = ScanDoors(World, baseX, baseZ)
-    if #doors == 0 then
-        return "区块(" .. cx .. "," .. cz .. ") 未找到木门"
-    end
-    if HasVillagersNear(World, baseX + 8, baseZ + 8, DEDUP_RADIUS) then
-        return "区块(" .. cx .. "," .. cz .. ") 有 " .. #doors .. " 扇门，但附近已有村民，跳过"
-    end
-    SpawnVillagers(World, { cx = cx, cz = cz }, doors)
-    return "区块(" .. cx .. "," .. cz .. ") 有 " .. #doors .. " 扇门，已尝试生成"
+    return "区块(" .. cx .. "," .. cz .. ") 找到 " .. #doors .. " 扇门"
 end
 
 -- ============================================================================
@@ -328,9 +298,9 @@ function village_life.GetStatus()
         scannedCount = scannedCount + 1
     end
     return string.format(
-        "VillageLife: 区块扫描=%s 村民生成=%s 扫描队列=%d(总队列 %d) 已扫描=%d 待落盘=%d",
-        tostring(village_life.EnableScanning), tostring(village_life.EnableVillageSpawning),
-        queuedCount, #ScanQueue, scannedCount, #PendingWrites)
+        "VillageLife: 区块扫描=%s 扫描队列=%d(总队列 %d) 已扫描=%d 含门村庄区块=%d 待落盘=%d",
+        tostring(village_life.EnableScanning), queuedCount, #ScanQueue,
+        scannedCount, #VillageChunks, #PendingWrites)
 end
 
 return village_life

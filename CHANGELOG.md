@@ -2,6 +2,28 @@
 
 **English** · [中文](CHANGELOG.zh-CN.md) · [README](README.md)
 
+## v2.6 — 2026-09-25
+
+### Removed
+
+- **Villagers in newly generated villages** (the former `[VillageLife] EnableVillageSpawning`) —
+  planned to move into a separate plugin. `village_life.lua` is now a pure "village chunk scanner":
+  it only records door-bearing village chunks (door count + one door coordinate) into
+  `village_scanned.txt` and **spawns nothing while scanning**.
+
+### Changed
+
+- **Village iron golem spawning is now a periodic condition check** instead of an immediate spawn
+  when a chunk is scanned. Controlled by `[IronGolem] EnableVillageGolemSpawning`; every
+  `VillageCheckSeconds` it requires «doors ≥ MinDoorsInChunk» and «villagers within
+  VillageGolemRadius ≥ MinVillagers» and «golems within the radius < MaxGolemsPerVillage»
+  before spawning one guard.
+- `VillageGolemRadius` default 48 → 64: a village can span ~96 blocks, so at 48 the edge chunks
+  were treated as separate villages (3 golems in one village in testing); 64 keeps it at 1–2.
+- Added `MinVillagers` (default 3) and `VillageCheckSeconds` (default 30).
+- Note: villagers are no longer spawned by this plugin, so `MinVillagers` must be satisfied by
+  villagers from another source.
+
 ## v2.5 — 2026-09-25
 
 ### Added (both features default to off; see `settings.ini`)

@@ -21,8 +21,8 @@ profession, a persistent identifier and a trade list that is refreshed over time
 - **Name-tag protection**: name tags cannot rename a plugin-managed villager.
 - **Villager spawn eggs**: craft 1 emerald + 1 egg, or buy one from a `vtGeneric` villager
   (the crafting recipe has a switch in `settings.ini`).
-- **Optional village ecology** (off by default): villagers in newly generated villages, plus village
-  iron golem guards — see "Optional village ecology" below.
+- **Optional iron golem guard** (off by default): lets existing iron golems attack nearby hostiles,
+  and can spawn village guards on a periodic condition check — see "Optional iron golem guard" below.
 
 ## Install
 
@@ -36,28 +36,39 @@ matches the vanilla villager window.
 [Features]
 EnableVillagerSpawnEggCrafting=1   ; 1 emerald + 1 egg = 1 villager spawn egg
 
-[VillageLife]                     ; village ecology (off by default)
-EnableVillageSpawning=0           ; spawn villagers in newly generated villages
-MaxVillagersPerChunk=2
+[VillageLife]                     ; village chunk scanning (off by default)
 ChunksPerTick=2
 SaveIntervalSeconds=30
 
-[IronGolem]                       ; village iron golem guard (off by default)
-EnableGuard=0                     ; guard behaviour
-EnableVillageGolemSpawning=0      ; spawn guards in villages
+[IronGolem]                       ; iron golems (off by default)
+EnableGuard=0                     ; let existing golems guard (target injection)
+EnableVillageGolemSpawning=0      ; spawn village guards on a periodic condition check
+MinDoorsInChunk=2
+MinVillagers=3
 MaxGolemsPerVillage=2
-VillageGolemRadius=48
+VillageGolemRadius=64
+VillageCheckSeconds=30
 ```
 
-### Optional village ecology (both switches default to 0)
+### Optional iron golem guard (off by default)
 
-- `[VillageLife] EnableVillageSpawning`: when a chunk first loads, if it was never scanned and lies
-  in a candidate biome, villagers are spawned using wooden doors as the village marker. Scanned
-  chunks are persisted in `village_scanned.txt` (delete it to re-scan everything once).
-- `[IronGolem] EnableVillageGolemSpawning` + `EnableGuard`: spawns 1–2 iron golem guards in
-  village chunks and lets them fight nearby hostiles with the **engine's own combat AI**. The plugin
-  only injects a target (one simulated hit, healed back immediately) and issues the chase path.
-- Console: `villagelife`, `villagelife flush`, `villagelife scan <cx> <cz>`, `golemguard`.
+- `[IronGolem] EnableGuard`: lets **existing** iron golems attack nearby hostiles. Cuberite's
+  `cIronGolem` combat AI is complete, but as a neutral mob it only acquires a target when damaged,
+  so the plugin only does two thin things: fake one attack to inject the target, and issue the chase
+  path. Chasing, attacking, cooldowns, knockback and difficulty scaling stay engine-side; the
+  simulated damage is healed back immediately (net loss 0).
+- `[IronGolem] EnableVillageGolemSpawning`: spawns guards on a **periodic condition check** —
+  nothing is spawned while scanning a chunk. Every `VillageCheckSeconds` it re-checks the scanned
+  door-bearing village chunks and requires «doors ≥ MinDoorsInChunk» **and** «villagers within
+  VillageGolemRadius ≥ MinVillagers» **and** «golems within the radius < MaxGolemsPerVillage»
+  before spawning one guard (`VillageGolemRadius` must cover the village span, otherwise adjacent
+  chunks can bypass the cap).
+- Village chunks are recorded by the `[VillageLife]` scan and persisted in `village_scanned.txt`
+  (one line: `<world> <cx> <cz> <doors> [door coords]`; delete the file to re-scan everything once).
+- Console: `villagelife` (scan status), `villagelife flush`, `villagelife scan <cx> <cz>`, `golemguard`.
+- Note: villagers are no longer spawned by this plugin (the former "villagers in newly generated
+  villages" feature was removed and is planned to move to a separate plugin), so the `MinVillagers`
+  condition must be satisfied by villagers from another source.
 
 - Write keys **without spaces around `=`**. Cuberite counts those spaces as part of the key name,
   the lookup fails, and the option silently falls back to its default.
