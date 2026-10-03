@@ -5,3 +5,5 @@ villager_data.txt
 village_scanned.txt
 .vscode
 villager_data.txt.pre-migration.bak
+__pycache__/
+*.pyc
