@@ -85,3 +85,33 @@ python3 docs/check_saved_professions.py <region文件> <chunkX> <chunkZ>
 
 > 注意：Cuberite 在本机以非 `--detached` 方式从前台启动，stdin 关闭（EOF）时会随之退出；
 > 远程无人值守跑测试时用 `--detached` 或如上包在 `setsid … < /dev/null` 里，并自行控制停止时机。
+
+## 6. 生产验证（raspi 实时服务器，2026-10-03）
+
+把同一份代码部署到正在运行的 32 位服务器后（`git pull` → 重载插件），插件自身完成了
+存量迁移与职业对齐，**无崩溃**：
+
+```
+[17:05:19] [VillagerTrade] 村民标识符迁移: vt-priest-dqxg88 -> Priest Bess（职业 2）
+[17:05:19] [VillagerTrade] 已对齐引擎职业: Priest Bess -> 2
+[17:05:19] [VillagerTrade] 村民标识符迁移: vt-butcher-5eu8j4 -> Butcher Olive（职业 4）
+[17:05:19] [VillagerTrade] 已对齐引擎职业: Butcher Olive -> 4
+...（共 41 只村民）...
+[17:05:19] [VillagerTrade] 已保存 41 个村民的数据。
+```
+
+随后扫描 `world/region` 里 17:11 刷盘的区块 NBT（用本目录的
+[check_saved_professions.py](../check_saved_professions.py)），**12 只已迁移村民的名字与
+`Profession` 全部一致**：
+
+| NBT 名字 | Profession | 期望 |
+|---|---|---|
+| Butcher Lena / Olive / Ralph / Gus | 4 | ✓ |
+| Farmer Bob / Daisy | 0 | ✓ |
+| Librarian Fred / Uma | 1 | ✓ |
+| Priest Bess / Tom / Ralph / Bill | 2 | ✓ |
+
+同时有 4 只尚未被扫到的村民仍是 `vt-librarian-4e75h3` 之类的旧名 + 随机职业（5/3/0/1）——
+说明懒迁移（只在村民被看到时迁移）按设计工作。
+
+**结论：ILP32 的读取与写入路径均已在真实 32 位服务器上端到端验证。**

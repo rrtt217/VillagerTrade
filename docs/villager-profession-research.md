@@ -161,8 +161,16 @@ Set.z(LandedPointer, Profession)   -- LP64：25 步落点 +0x41C，.z 即 +0x424
 （`Farmer Bess`/0、`Blacksmith Fred`/3 …），写入确实随 NBT 持久化。
 
 **校准门槛**：插件侧先只读不写——必须先自校准（≥3 样本且 ≥2 种职业）。村民少的服务器要等几轮
-20 秒扫描；在此之前对齐不生效（fail-closed），绝不会写错值。ILP32 的**写入**路径由布局表派生
-（组件 `.y`）但尚未在 32 位实机上实际跑过（**读取**已在 raspi 验证）。
+20 秒扫描；在此之前对齐不生效（fail-closed），绝不会写错值。
+
+**ILP32 写入已在 raspi 生产服务器上验证**（2026-10-03，插件自身完成 41 只村民的迁移/对齐，
+无崩溃）。事后扫描 `world/region` 的区块 NBT，**12 只已迁移村民的名字与 `Profession` 全部一致**：
+
+```
+Butcher Lena/Olive/Ralph/Gus  prof=4      Librarian Fred/Uma   prof=1
+Farmer Bob/Daisy             prof=0      Priest Bess/Tom/Ralph/Bill prof=2
+（未迁移的 4 只仍是 vt-... 旧名 + 随机职业，说明懒迁移按设计工作）
+```
 
 ## 已知边界与后续可能
 

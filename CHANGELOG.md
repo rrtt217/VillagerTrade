@@ -33,8 +33,9 @@
   profession - that is the point of the alignment. Set `AlignRealProfession=0` to go read-only.
 - **Never** write these fields with a member assignment such as `P.z = v`: it unbalances the Lua
   stack and aborts the server (verified). The module only uses the raw
-  `registry["Vector3<int>"][".set"]` closures. On 32-bit ARM only the read path is verified so far;
-  the write path has not been exercised there yet.
+  `registry["Vector3<int>"][".set"]` closures. Both **read and write** are now verified on 32-bit ARM
+  too: the raspi production server migrated/aligned 41 villagers with no crash, and a post-migration
+  NBT spot check matched names and `Profession` 12/12.
 ## v2.6 — 2026-09-25
 
 ### Removed
