@@ -3,8 +3,17 @@
 **English** · [中文](README.zh-CN.md) · [Changelog](CHANGELOG.md)
 
 A Cuberite plugin that adds "sort of working" villager trading. Cuberite's Lua API does not
-expose the real villager profession, so the plugin gives every villager its own virtual
+expose the real villager profession, so by default the plugin gives every villager its own virtual
 profession, a persistent identifier and a trade list that is refreshed over time.
+
+> Note: the engine's internal profession (`cVillager::m_Type`) can now be read safely through
+> `tolua.cast` type reinterpretation - see [villager_profession.lua](villager_profession.lua) and the
+> [research notes](docs/villager-profession-research.md) (verified on both x86-64 LP64 and 32-bit
+> armv6l ILP32 servers, matched field-by-field against the chunk NBT `Profession`). The plugin keeps
+> its own assigned profession as the source of truth and now **writes it back** to the engine
+> (`[Features] AlignRealProfession`), so the visible appearance (1.8-1.12 clients render by
+> profession), farmer AI and zombie-villager conversion match the trades. Villager names also became
+> readable English `<Profession> <Name>` (`[Features] ReadableNames`), with automatic migration.
 
 ## Features
 

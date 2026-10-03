@@ -2,6 +2,39 @@
 
 **English** · [中文](CHANGELOG.zh-CN.md) · [README](README.md)
 
+## v2.7 — 2026-10-03
+
+### Added
+
+- **Reading and aligning the real profession** (`villager_profession.lua`): the engine-internal
+  profession `cVillager::m_Type` is read through `tolua.cast` type reinterpretation (self-calibrating
+  LP64/ILP32 layouts, three-field sanity checks, fail-closed), and the plugin's profession is
+  **written back** with the raw class-table setter (4-byte aligned write + immediate read-back
+  verification). 1.8-1.12 clients render villagers by profession, so appearance, farmer AI,
+  zombie-villager conversion and the trades now agree. Toggle: `[Features] AlignRealProfession`
+  (default on). See the [research notes](docs/villager-profession-research.md).
+- **Readable villager names**: `<Profession> <Name>` (e.g. `Butcher Bill`, numeric suffix on
+  collision) replaces `vt-<profession>-<randomcode>`. Legacy names migrate automatically when the
+  villager is seen (the data key is moved too; `villager_data.txt.pre-migration.bak` is written
+  before the first rename). Toggle: `[Features] ReadableNames` (default on). Note: the engine has no
+  persistent entity UUID (`GetUniqueID` is a session-only entity ID), so CustomName is the only
+  persistent key and names must stay unique.
+
+### Changed
+
+- The villager data parser tolerates spaces inside identifiers (readable names) and follows the
+  in-session rename map, so an already-open trade window keeps its XP/level.
+- Name/profession self-healing: a name whose prefix no longer matches the profession is renamed.
+- Villager maintenance now runs under `pcall` and reports per-round rename/align counters.
+
+### Notes
+
+- Writing the engine profession changes villager AI (farmers start farming) and the client-rendered
+  profession - that is the point of the alignment. Set `AlignRealProfession=0` to go read-only.
+- **Never** write these fields with a member assignment such as `P.z = v`: it unbalances the Lua
+  stack and aborts the server (verified). The module only uses the raw
+  `registry["Vector3<int>"][".set"]` closures. On 32-bit ARM only the read path is verified so far;
+  the write path has not been exercised there yet.
 ## v2.6 — 2026-09-25
 
 ### Removed

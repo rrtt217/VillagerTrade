@@ -33,6 +33,17 @@ function Initialize(Plugin)
     EnableVillagerSpawnEggCrafting = Config:GetValueSetB("Features", "EnableVillagerSpawnEggCrafting", true)
     LOG("配置: EnableVillagerSpawnEggCrafting=" .. tostring(EnableVillagerSpawnEggCrafting))
 
+    -- 村民职业/命名（见 settings.ini [Features]）：
+    --   AlignRealProfession: 把引擎内部职业（cVillager::m_Type）写成插件职业——
+    --                        影响农夫 AI、僵尸村民转化，以及 1.8-1.12 客户端按职业渲染的外观
+    --   ReadableNames:       用可读英文名 "<Profession> <Name>"，旧格式 vt-... 会在被看到时迁移
+    _G.VillagerManagerSettings = {
+        AlignRealProfession = Config:GetValueSetB("Features", "AlignRealProfession", true),
+        ReadableNames       = Config:GetValueSetB("Features", "ReadableNames", true),
+    }
+    LOG("配置: AlignRealProfession=" .. tostring(_G.VillagerManagerSettings.AlignRealProfession)
+        .. " ReadableNames=" .. tostring(_G.VillagerManagerSettings.ReadableNames))
+
     -- 村庄区块扫描（持久化"每区块只扫一次"，供铁傀儡守卫的"村庄生成"使用）：
     -- 默认关闭，见 settings.ini [VillageLife]
     _G.VillageLifeSettings = {
@@ -91,6 +102,11 @@ function Initialize(Plugin)
         return
     end
     _G.VillagerManager = villager_manager
+
+    -- 应用配置（必须在下面 LoadVillagerData / EnsureAllVillagersHaveIDs 之前）
+    for Key, Value in pairs(_G.VillagerManagerSettings or {}) do
+        villager_manager[Key] = Value
+    end
 
     -- 加载物品名本地化模块（聊天栏显示客户端可翻译的物品名）
     local item_l10n = require("item_l10n")

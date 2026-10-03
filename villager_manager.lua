@@ -3,8 +3,13 @@
 --
 -- 设计说明：
 --   * 村民唯一标识符使用 CustomName（会持久化到 NBT，服务器重启后保留）。
---   * 标识符格式：<职业编号>-<随机字符>，例如 "0-a1b2c3"。
---     由于 Lua 无法读取村民真实职业（cVillager 未导出），职业是插件虚拟分配的。
+--     引擎没有可持久化的实体 UUID（cEntity 无 m_UUID，GetUniqueID 只是会话内 EntityID），
+--     所以 CustomName 是唯一可用的持久键，名字必须保持唯一。
+--   * 名字格式：可读英文名 "<Profession> <Name>"（例如 "Butcher Bill"），重名时加数字后缀；
+--     旧格式 "vt-<职业>-<随机码>" 会在村民被看到时自动迁移（重命名 + 数据键搬移）。
+--   * 职业由插件分配（虚拟职业），并通过 villager_profession.WriteProfession 写回引擎的
+--     cVillager::m_Type，让 AI（农夫种田）、僵尸村民转化与客户端渲染（1.8-1.12 会下发职业元数据）
+--     与交易内容一致。
 --   * 村民数据按标识符存储到 villager_data.txt：
 --       <villagerID> = <profession> | <xp1> | <xp2> | <xp3> | <xp4> | <xp5> | <xp6> | <lastRefreshWorldAge>
 --     lastRefreshWorldAge 为上次刷新交易时的世界 tick 年龄（World:GetWorldAge()）。
@@ -34,8 +39,42 @@ for num, name in pairs(villager_manager.PROFESSION_NAMES) do
     villager_manager.PROFESSION_NAME_TO_NUM[name] = num
 end
 
--- 标识符前缀（用于识别我们分配的村民名字）
+-- 可读名字用的职业显示名（英文，保持单个词，便于在名字里辨认）
+villager_manager.PROFESSION_DISPLAY = {
+    [0] = "Farmer",
+    [1] = "Librarian",
+    [2] = "Priest",
+    [3] = "Blacksmith",
+    [4] = "Butcher",
+    [5] = "Merchant",
+}
+
+-- 可读名字用的名字表（英文，短、易读、无空格）
+villager_manager.FIRST_NAMES = {
+    "Abe", "Alice", "Ann", "Bess", "Bill", "Bob", "Bram", "Cole", "Daisy", "Dora",
+    "Edith", "Eli", "Fern", "Fred", "Gus", "Gwen", "Hank", "Hattie", "Ike", "Ivy",
+    "Jack", "Jane", "Kate", "Kirk", "Lena", "Luke", "Mabel", "Meg", "Milo", "Ned",
+    "Nell", "Olive", "Owen", "Pearl", "Pete", "Quinn", "Ralph", "Rose", "Sadie", "Sam",
+    "Seth", "Silas", "Ted", "Tess", "Tilly", "Tom", "Uma", "Vince", "Walt", "Willa",
+    "Zeke",
+}
+
+-- 旧格式标识符前缀（迁移用）
 villager_manager.ID_PREFIX = "vt-"
+
+-- 运行开关（由 main.lua 依据 settings.ini 覆盖；此处给默认值以便单独加载时也能工作）
+villager_manager.AlignRealProfession = true   -- 把引擎职业对齐为插件职业
+villager_manager.ReadableNames = true         -- 使用可读英文名
+
+-- 会话内重命名映射：old -> new（供已打开的交易窗口沿用同一个数据条目）
+villager_manager.RenamedIDs = {}
+
+-- 本次会话已确认对齐过的村民（name -> profession），避免每轮扫描都读引擎字段
+villager_manager.AlignedIDs = {}
+
+-- 迁移/对齐统计
+villager_manager.MigratedCount = 0
+villager_manager.AlignCount = 0
 
 -- 村民数据表：villagerID -> { profession = <num>, xp = {6个}, lastRefreshAge = <num> }
 villager_manager.Villagers = {}
@@ -113,7 +152,7 @@ function villager_manager.GenerateRandomSuffix()
     return suffix
 end
 
--- 生成唯一标识符（职业编号 + 随机字符），确保不与已分配的重名
+-- 生成旧格式标识符（职业编号 + 随机字符）——仅在 ReadableNames=false 时作为回退
 function villager_manager.GenerateID(profession)
     local name = villager_manager.PROFESSION_NAMES[profession] or "generic"
     local id
@@ -124,7 +163,25 @@ function villager_manager.GenerateID(profession)
     return id
 end
 
--- 从标识符解析职业编号；无法解析时返回 nil
+-- 生成可读名字 "<Profession> <Name>"；重名时加 " 2"/" 3"… 后缀（AssignedIDs 保证唯一）
+function villager_manager.GenerateName(profession)
+    local Display = villager_manager.PROFESSION_DISPLAY[profession] or "Merchant"
+    local Base = Display .. " " .. villager_manager.FIRST_NAMES[Random.Int(1, #villager_manager.FIRST_NAMES)]
+    local Name, N = Base, 1
+    while villager_manager.AssignedIDs[Name] do
+        N = N + 1
+        Name = Base .. " " .. N
+    end
+    villager_manager.AssignedIDs[Name] = true
+    return Name
+end
+
+-- 旧格式（vt-<职业>-<随机码>）？
+function villager_manager.IsLegacyID(name)
+    return (type(name) == "string") and (name:sub(1, #villager_manager.ID_PREFIX) == villager_manager.ID_PREFIX)
+end
+
+-- 从旧格式标识符解析职业编号；无法解析时返回 nil
 function villager_manager.GetProfessionFromID(id)
     if not id then return nil end
     -- 格式: vt-<name>-<suffix>（注意 - 在 Lua 模式中需转义为 %-）
@@ -133,29 +190,152 @@ function villager_manager.GetProfessionFromID(id)
     return villager_manager.PROFESSION_NAME_TO_NUM[name]
 end
 
--- 判断一个 CustomName 是否是我们分配的标识符
+-- 这个名字是不是插件管理的标识符（旧格式，或数据表里已有，或本次会话分配过）
 function villager_manager.IsAssignedID(name)
-    if not name then return false end
-    return name:sub(1, #villager_manager.ID_PREFIX) == villager_manager.ID_PREFIX
+    if (name == nil) or (name == "") then return false end
+    if villager_manager.IsLegacyID(name) then return true end
+    return (villager_manager.Villagers[name] ~= nil) or (villager_manager.AssignedIDs[name] == true)
 end
 
--- 确保村民有标识符；若没有则分配一个并设置 CustomName。
--- 返回村民标识符。
+-- 跟随重命名映射，拿到当前有效的标识符（已打开的交易窗口沿用新条目）
+function villager_manager.ResolveID(id)
+    local Cur, Guard = id, 0
+    while (Cur ~= nil) and villager_manager.RenamedIDs[Cur] do
+        Cur = villager_manager.RenamedIDs[Cur]
+        Guard = Guard + 1
+        if Guard > 16 then break end
+    end
+    return Cur
+end
+
+-- 强制下一次 SaveVillagerDataIfDue 立刻落盘
+function villager_manager.MarkDataDirty()
+    villager_manager.LastSaveTime = 0
+end
+
+-- 迁移前备份一次（已存在备份则跳过）
+function villager_manager.BackupDataFileOnce()
+    if villager_manager.BackupDone then return end
+    villager_manager.BackupDone = true
+    local Folder = PLUGIN:GetLocalFolder()
+    local Src = Folder .. "/villager_data.txt"
+    local Dst = Folder .. "/villager_data.txt.pre-migration.bak"
+    if (not cFile:IsFile(Src)) or cFile:IsFile(Dst) then return end
+    local In = io.open(Src, "r")
+    if not In then return end
+    local Content = In:read("*a")
+    In:close()
+    local Out = io.open(Dst, "w")
+    if not Out then return end
+    Out:write(Content)
+    Out:close()
+    LOG("已备份迁移前的村民数据: villager_data.txt.pre-migration.bak")
+end
+
+-- 把引擎内部职业（cVillager::m_Type）对齐为插件职业。
+-- 读取模块不可用/未校准时静默跳过（下次扫描再试）；成功结果按名字缓存，避免每次扫描都读一遍。
+function villager_manager.AlignEngineProfession(villager, profession, name)
+    if not villager_manager.AlignRealProfession then
+        return false
+    end
+    name = name or villager:GetCustomName()
+    if (name ~= nil) and (villager_manager.AlignedIDs[name] == profession) then
+        return true
+    end
+    if (type(villager_profession) ~= "table") or (villager_profession.WriteProfession == nil) then
+        return false
+    end
+    local Current = villager_profession.ReadProfession(villager)
+    if (Current == nil) then
+        return false
+    end
+    if (Current ~= profession) then
+        local Ok, Err = villager_profession.WriteProfession(villager, profession)
+        if not Ok then
+            if not villager_manager.AlignWarned then
+                villager_manager.AlignWarned = true
+                LOGWARNING("无法对齐引擎职业（后续不再重复报告）: " .. tostring(Err))
+            end
+            return false
+        end
+        villager_manager.AlignCount = villager_manager.AlignCount + 1
+        LOG(("已对齐引擎职业: %s -> %d"):format(tostring(name), profession))
+    end
+    if (name ~= nil) then
+        villager_manager.AlignedIDs[name] = profession
+    end
+    return true
+end
+
+-- 把旧格式标识符迁移为可读名字：搬移数据条目、重命名、对齐引擎职业。
+function villager_manager.MigrateVillagerIdentity(villager, OldName, data)
+    local FinalName = OldName
+    if villager_manager.ReadableNames then
+        villager_manager.BackupDataFileOnce()
+        local NewName = villager_manager.GenerateName(data.profession)
+        villager_manager.Villagers[NewName] = data
+        villager_manager.Villagers[OldName] = nil
+        villager_manager.RenamedIDs[OldName] = NewName
+        villager:SetCustomName(NewName)
+        villager:SetCustomNameAlwaysVisible(false)
+        villager_manager.MigratedCount = villager_manager.MigratedCount + 1
+        villager_manager.MarkDataDirty()
+        LOG(("村民标识符迁移: %s -> %s（职业 %d）"):format(OldName, NewName, data.profession))
+        FinalName = NewName
+    end
+    villager_manager.AlignEngineProfession(villager, data.profession, FinalName)
+    return FinalName
+end
+
+-- 确保村民有（当前格式的）标识符：迁移旧格式、接管陌生村民、把引擎职业对齐。
+-- 返回村民标识符。交易刷新 / 右键交互 / 启动扫描都走这个入口。
 function villager_manager.EnsureVillagerID(villager)
-    local name = villager:GetCustomName()
-    if villager_manager.IsAssignedID(name) then
-        -- 已有标识符，登记到已分配集合
-        villager_manager.AssignedIDs[name] = true
-        return name
+    local Name = villager:GetCustomName()
+    local Data = ((Name ~= nil) and (Name ~= "")) and villager_manager.Villagers[Name] or nil
+
+    if Data ~= nil then
+        villager_manager.AssignedIDs[Name] = true
+        if villager_manager.IsLegacyID(Name) then
+            return villager_manager.MigrateVillagerIdentity(villager, Name, Data)
+        end
+        -- 名字前缀必须与职业一致：职业被改过、或早期版本错标过名字时自愈重命名
+        local Expected = villager_manager.PROFESSION_DISPLAY[Data.profession]
+        if (Expected ~= nil) and (Name:sub(1, #Expected) ~= Expected) then
+            LOG(("村民名字与职业不符，重新命名: %s（职业 %d）"):format(Name, Data.profession))
+            return villager_manager.MigrateVillagerIdentity(villager, Name, Data)
+        end
+        villager_manager.AlignEngineProfession(villager, Data.profession, Name)
+        return Name
     end
 
-    -- 没有标识符，分配一个（随机职业）
-    local profession = Random.Int(0, 5)
-    local id = villager_manager.GenerateID(profession)
-    villager:SetCustomName(id)
+    -- 旧格式名字但数据表里没有（数据被清理过 / 手工改名过）：按名字重建条目再迁移
+    if villager_manager.IsLegacyID(Name) then
+        local Profession = villager_manager.GetProfessionFromID(Name)
+        if (Profession == nil) then
+            Profession = Random.Int(0, 5)
+        end
+        local NewData = { profession = Profession, xp = {0, 0, 0, 0, 0, 0}, lastRefreshAge = nil }
+        villager_manager.Villagers[Name] = NewData
+        villager_manager.AssignedIDs[Name] = true
+        return villager_manager.MigrateVillagerIdentity(villager, Name, NewData)
+    end
+
+    -- 完全陌生（自然生成 / 刷怪蛋）：随机职业 + 可读名字，并对齐引擎职业
+    local Profession = Random.Int(0, 5)
+    local NewName
+    if villager_manager.ReadableNames then
+        NewName = villager_manager.GenerateName(Profession)
+    else
+        NewName = villager_manager.GenerateID(Profession)
+    end
+    villager_manager.Villagers[NewName] = { profession = Profession, xp = {0, 0, 0, 0, 0, 0}, lastRefreshAge = nil }
+    villager_manager.AssignedIDs[NewName] = true
+    villager:SetCustomName(NewName)
     villager:SetCustomNameAlwaysVisible(false)  -- 不常显，减少视觉干扰
-    DEBUGLOG("为村民分配标识符: " .. id)
-    return id
+    villager_manager.AlignEngineProfession(villager, Profession, NewName)
+    villager_manager.MarkDataDirty()
+    DEBUGLOG("为村民分配标识符: " .. NewName)
+    return NewName
 end
 
 -- 获取村民数据；若不存在则创建默认数据。
@@ -164,6 +344,8 @@ function villager_manager.GetVillagerData(villagerID)
     if not villagerID then
         return { profession = 5, xp = {0, 0, 0, 0, 0, 0}, lastRefreshAge = nil }
     end
+    -- 已打开的交易窗口持有的是旧标识符：跟随本次会话的重命名映射
+    villagerID = villager_manager.ResolveID(villagerID)
     local data = villager_manager.Villagers[villagerID]
     if not data then
         local profession = villager_manager.GetProfessionFromID(villagerID) or 5
@@ -181,13 +363,25 @@ end
 -- 返回 { villagerID -> cMonster } 映射（仅当前已加载的村民）。
 function villager_manager.EnsureAllVillagersHaveIDs(World)
     local found = {}
+    local BeforeMigrated = villager_manager.MigratedCount
+    local BeforeAligned = villager_manager.AlignCount
     World:ForEachEntity(function(Entity)
-        if Entity:IsMob() and Entity:GetMobType() == mtVillager then
-            local id = villager_manager.EnsureVillagerID(Entity)
-            found[id] = Entity
+        local Ok = pcall(function()
+            if Entity:IsMob() and Entity:GetMobType() == mtVillager then
+                local id = villager_manager.EnsureVillagerID(Entity)
+                found[id] = Entity
+            end
+        end)
+        if not Ok then
+            LOGWARNING("处理村民标识符时出错（已跳过该实体）")
         end
         return false  -- 继续遍历
     end)
+    local Migrated = villager_manager.MigratedCount - BeforeMigrated
+    local Aligned = villager_manager.AlignCount - BeforeAligned
+    if (Migrated > 0) or (Aligned > 0) then
+        LOG(("本轮村民维护: 重命名迁移 %d 个，引擎职业对齐 %d 个"):format(Migrated, Aligned))
+    end
     return found
 end
 
@@ -208,8 +402,10 @@ function villager_manager.LoadVillagerData()
                 -- 格式: <villagerID> = <profession> | <xp1> | ... | <xp6> | <lastRefreshAge>
                 -- 字段数必须与 SaveVillagerData 写出的完全一致：
                 -- 1 个职业 + 6 个经验 + 1 个年龄 = 8 个数字（多一个捕获会导致永远匹配失败，数据随后被覆盖丢失）
-                local id, prof, x1, x2, x3, x4, x5, x6, age =
-                    line:match("^(%S+)%s*=%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%-?%d+)$")
+                -- 标识符里可能含空格（可读名字 "Butcher Bill"），所以用惰性匹配到 " =" 之前
+                local Pattern =
+                    "^(.-)%s*=%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%d+)%s*|%s*(%-?%d+)$"
+                local id, prof, x1, x2, x3, x4, x5, x6, age = line:match(Pattern)
                 if id then
                     local lastAge = tonumber(age)
                     if lastAge == -1 then

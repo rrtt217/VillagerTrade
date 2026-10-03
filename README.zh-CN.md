@@ -2,8 +2,15 @@
 
 [English](README.md) · **中文** · [更新日志](CHANGELOG.zh-CN.md)
 
-为 Cuberite 提供"近似原版"村民交易的插件。Cuberite 的 Lua API 无法读取村民真实职业，
-因此插件为每个村民分配一个虚拟职业、一个可持久化的标识符，以及一份会随时间刷新的交易列表。
+为 Cuberite 提供"近似原版"村民交易的插件。Cuberite 的 Lua API 不导出村民真实职业，
+因此插件默认为每个村民分配一个虚拟职业、一个可持久化的标识符，以及一份会随时间刷新的交易列表。
+
+> 注：引擎内部职业（`cVillager::m_Type`）现已可用 `tolua.cast` 类型重解释安全读取——见
+> [villager_profession.lua](villager_profession.lua) 与 [研究记录](docs/villager-profession-research.md)
+> （x86-64 LP64 与 32 位 armv6l ILP32 都已实机验证，与区块 NBT 的 `Profession` 逐一比对一致）。
+> 插件仍以自己分配的职业为准，并把引擎职业**写回对齐**（1.8–1.12 客户端按职业渲染外观，
+> 农夫 AI 与僵尸村民转化也用它），开关 `[Features] AlignRealProfession`；村民名字同时改为
+> 可读英文名 `<Profession> <Name>`（旧名自动迁移），开关 `[Features] ReadableNames`。
 
 ## 功能
 

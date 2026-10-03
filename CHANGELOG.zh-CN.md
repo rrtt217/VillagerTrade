@@ -2,6 +2,34 @@
 
 [English](CHANGELOG.md) · **中文** · [说明文档](README.zh-CN.md)
 
+## v2.7 — 2026-10-03
+
+### 新增
+
+- **真实职业读取与写回对齐**（`villager_profession.lua`）：用 `tolua.cast` 类型重解释读取引擎内部职业
+  `cVillager::m_Type`（自校准 LP64/ILP32 双布局、三字段联合自检、fail-closed），并用类表上的原始
+  setter 把插件职业**写回**引擎（4 字节对齐写 + 立即回读校验）。1.8–1.12 客户端按职业渲染外观，
+  因此对齐后外观、农夫 AI、僵尸村民转化与交易内容一致。开关 `[Features] AlignRealProfession`（默认开）。
+  推导与实测见 [研究记录](docs/villager-profession-research.md)。
+- **可读村民名**：名字改为英文 `<Profession> <Name>`（如 `Butcher Bill`；重名自动加数字后缀），
+  取代 `vt-<职业>-<随机码>`。旧名字在村民被看到时自动迁移（数据键同步搬移；迁移前备份
+  `villager_data.txt.pre-migration.bak`）。开关 `[Features] ReadableNames`（默认开）。
+  说明：引擎没有可持久化的实体 UUID（`GetUniqueID` 只是会话内 EntityID），CustomName 是唯一持久键，
+  名字必须保持唯一。
+
+### 变更
+
+- 村民数据文件解析容忍标识符中的空格（可读名字），并跟随会话内重命名映射——已打开的交易窗口
+  不会因改名而丢失经验/等级。
+- 名字与职业一致性自愈：名字前缀与职业不符时自动重新命名。
+- 村民维护增加 pcall 保护与"本轮重命名/对齐"统计日志。
+
+### 注意
+
+- 写引擎职业会改变村民 AI（农夫开始种田）与客户端渲染职业——这正是对齐的目的；关掉
+  `AlignRealProfession` 可退回"只读"。
+- **禁止**用 `P.z = v` 这类成员赋值写这些字段：实测会破坏 Lua 栈平衡并让引擎 SIGABRT；模块只用
+  `registry["Vector3<int>"][".set"]` 的原始闭包。32 位实机目前只验证了读取，写入尚未在 ILP32 上实测。
 ## v2.6 — 2026-09-25
 
 ### 移除
